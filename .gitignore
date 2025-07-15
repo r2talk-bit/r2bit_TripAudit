@@ -1,0 +1,80 @@
+# Python virtual environments
+venv/
+env/
+.env/
+.venv/
+ENV/
+
+# Output directories
+/data/*
+/models/*
+/output/*
+
+# Keep .gitkeep files to maintain directory structure
+!/data/.gitkeep
+!/models/.gitkeep
+!/output/.gitkeep
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Tesseract temp files
+*.traineddata
+
+# PDF and image files in data directories
+data/**/*.pdf
+data/**/*.jpg
+data/**/*.png
+data/**/*.tiff
+
+# Model checkpoints and saved models
+models/**/*.pt
+models/**/*.bin
+models/**/*.json
+models/**/*.h5
+models/**/*.onnx
+
+# Output files
+output/**/*.xlsx
+output/**/*.csv
+output/**/*.json
+output/**/*.pdf
