@@ -186,7 +186,7 @@ class ExpenseReportPreprocessor:
     
     def extract_tables(self, image_path: str) -> List[np.ndarray]:
         """
-        Detecta e extrai tabelas da imagem.
+        Detecta e extrai tabelas da imagem usando img2table.
         
         Args:
             image_path: Caminho para a imagem
@@ -194,37 +194,38 @@ class ExpenseReportPreprocessor:
         Returns:
             Lista de arrays NumPy representando as tabelas detectadas
         """
-        # Carregar imagem
-        img = cv2.imread(image_path)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        from img2table.ocr import TesseractOCR
+        from img2table.document import Image as Img2TableImage
         
-        # Aplicar threshold
-        _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+        # Configurar OCR (usando o mesmo idioma configurado para o preprocessador)
+        ocr = TesseractOCR(lang=self.tesseract_lang)
         
-        # Detectar linhas horizontais e verticais
-        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
-        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        # Carregar e processar a imagem
+        img_document = Img2TableImage(image_path)
         
-        horizontal_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=2)
-        vertical_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+        # Extrair tabelas
+        tables_dict = img_document.extract_tables(ocr=ocr)
         
-        # Combinar linhas
-        table_mask = cv2.add(horizontal_lines, vertical_lines)
+        # Converter para o formato esperado (lista de arrays NumPy)
+        result_tables = []
         
-        # Encontrar contornos
-        contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Filtrar contornos por tamanho
-        tables = []
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            # Filtrar por tamanho mínimo
-            if w > 100 and h > 100:
+        # Verificar se tables_dict é um dicionário e não está vazio
+        if isinstance(tables_dict, dict) and tables_dict:
+            for table_id, table in tables_dict.items():
+                # Obter coordenadas da tabela
+                bbox = table.bbox
+                x, y, w, h = bbox.x0, bbox.y0, bbox.width, bbox.height
+                
+                # Carregar imagem original e recortar a região da tabela
+                img = cv2.imread(image_path)
                 table_img = img[y:y+h, x:x+w]
-                tables.append(table_img)
-        
-        print(f"Detectadas {len(tables)} tabelas na imagem")
-        return tables
+                result_tables.append(table_img)
+            
+            print(f"Detectadas {len(result_tables)} tabelas na imagem usando img2table")
+        else:
+            print("Nenhuma tabela detectada na imagem usando img2table")
+            
+        return result_tables
     
     def visualize_tables(self, image_path: str, output_dir: Optional[str] = None) -> List[str]:
         """
@@ -322,7 +323,7 @@ def main():
     parser.add_argument("--output_dir", "-o", help="Diretório para salvar os resultados")
     parser.add_argument("--no-enhance", action="store_true", help="Desativar melhoria de imagem")
     parser.add_argument("--dpi", type=int, default=300, help="DPI para conversão do PDF")
-    parser.add_argument("--lang", default="por", help="Idioma para OCR (padrão: português)")
+    parser.add_argument("--lang", default="eng", help="Idioma para OCR (padrão: inglês)")
     
     args = parser.parse_args()
     

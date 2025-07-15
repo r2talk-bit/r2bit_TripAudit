@@ -88,7 +88,12 @@ def run_demo(output_dir=None, visualize=True):
     extractor.export_to_excel(summary, excel_path)
     print(f"\n5. Relatório exportado para Excel: {excel_path}")
     
-    # 6. Informações finais
+    # 6. Gerar relatório de texto com descobertas
+    text_report_path = os.path.join(output_dir, "discovery_summary.txt")
+    extractor.generate_text_report(summary, text_report_path)
+    print(f"\n6. Relatório de texto exportado para: {text_report_path}")
+    
+    # 7. Informações finais
     print("\n" + "="*50)
     print("DEMONSTRAÇÃO CONCLUÍDA")
     print("="*50)
@@ -100,6 +105,7 @@ def run_demo(output_dir=None, visualize=True):
         "pdf_path": pdf_path,
         "processed_dir": processed_dir,
         "excel_path": excel_path,
+        "text_report_path": text_report_path,
         "summary": summary
     }
 

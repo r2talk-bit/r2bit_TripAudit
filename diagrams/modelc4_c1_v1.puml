@@ -1,0 +1,13 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+title Diagrama de Contexto do Sistema para r2bit_TripAudit
+Person(funcionarios, "Funcionário")
+Person(gestores, "Gestores Financeiros")
+System(tripAudit, "r2bit_TripAudit", "Sistema para auditoria e análise de despesas")
+System_Ext(reimbursementPolicy, "Sistema de Políticas de Reembolso", "Define e gerencia regras de reembolso da empresa")
+System_Ext(LLMs, "LLM", "Modelo de Linguagem Grande (LLM) para análise e interpretação")
+Rel(funcionarios, tripAudit, "Faz upload de relatórios de despesas, visualiza análises")
+Rel(gestores, tripAudit, "Visualiza análises e aprova auditorias")
+Rel(tripAudit, reimbursementPolicy, "Consulta regras de reembolso")
+Rel(tripAudit, LLMs, "Envia consultas para análise, interpretação e geração de conteúdo")
+@enduml

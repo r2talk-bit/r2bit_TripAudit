@@ -1,0 +1,39 @@
+@startuml modelc4_c1
+
+' Force PlantUML to use its internal layout engine instead of GraphViz/Dot
+!pragma layout smetana
+
+' Basic styling without external libraries
+skinparam monochrome false
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam roundCorner 5
+skinparam wrapWidth 200
+skinparam maxMessageSize 150
+
+title Diagrama de Contexto do Sistema para r2bit_TripAudit (Atualizado)
+
+' Define actors
+actor "Analistas de Despesas" as analistas
+actor "Gestores Financeiros" as gestores
+
+' Define systems
+rectangle "r2bit_TripAudit\nSistema completo para auditoria e análise de despesas" as tripAudit #lightblue
+
+' Define external systems
+cloud "Serviço de Armazenamento de PDFs\nArmazena documentos PDF de relatórios de despesas" as pdfStorage #lightgray
+cloud "Sistema de Políticas de Reembolso\nDefine e gerencia regras de reembolso da empresa" as reimbursementPolicy #lightgray
+cloud "GPT-4o (OpenAI)\nModelo de Linguagem Grande (LLM) para análise e interpretação" as gpt4o #lightgray
+cloud "Outros Modelos LLM\nServiços adicionais de LLM conforme necessário" as otherLLMs #lightgray
+
+' Relationships
+analistas --> tripAudit : Faz upload de relatórios de\ndespesas, visualiza análises
+gestores --> tripAudit : Visualiza análises e\naprova auditorias
+
+tripAudit --> pdfStorage : Recupera documentos PDF
+tripAudit --> reimbursementPolicy : Consulta regras de reembolso
+tripAudit --> gpt4o : Envia consultas para análise,\ninterpretação e geração de conteúdo
+tripAudit --> otherLLMs : Envia consultas para análise,\ninterpretação e geração de conteúdo
+
+@enduml

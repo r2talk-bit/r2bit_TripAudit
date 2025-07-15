@@ -23,10 +23,37 @@ class ExpenseReportExtractor:
         self.processor = LayoutLMv3Processor.from_pretrained(model_name, apply_ocr=False)
         self.model = LayoutLMv3ForTokenClassification.from_pretrained(model_name)
         
-        # Como o modelo não está fine-tuned para relatórios de despesas,
-        # vamos definir um mapeamento de rótulos básico
+        # Configuração de rótulos detalhada para relatórios de despesas
         if not hasattr(self.model.config, 'id2label') or not self.model.config.id2label:
-            self.model.config.id2label = {0: "O", 1: "B-VALOR", 2: "I-VALOR", 3: "B-DATA", 4: "I-DATA"}
+            self.model.config.id2label = {
+                0: "O",                    # Outside (não é uma entidade relevante)
+                1: "B-VALOR_TOTAL",        # Início de um valor total
+                2: "I-VALOR_TOTAL",        # Continuação de um valor total
+                3: "B-VALOR_ITEM",         # Início de um valor de item individual
+                4: "I-VALOR_ITEM",         # Continuação de um valor de item
+                5: "B-DATA",               # Início de uma data
+                6: "I-DATA",               # Continuação de uma data
+                7: "B-CATEGORIA",          # Início de uma categoria de despesa
+                8: "I-CATEGORIA",          # Continuação de uma categoria
+                9: "B-FORNECEDOR",         # Início do nome do fornecedor
+                10: "I-FORNECEDOR",        # Continuação do nome do fornecedor
+                11: "B-DESCRICAO",         # Início da descrição do item
+                12: "I-DESCRICAO",         # Continuação da descrição
+                13: "B-NUMERO_DOCUMENTO",  # Início do número do documento/recibo
+                14: "I-NUMERO_DOCUMENTO",  # Continuação do número do documento
+                15: "B-METODO_PAGAMENTO",  # Início do método de pagamento
+                16: "I-METODO_PAGAMENTO",  # Continuação do método de pagamento
+                17: "B-MOEDA",             # Início do código da moeda
+                18: "I-MOEDA",             # Continuação do código da moeda
+                19: "B-TAXA",              # Início de uma taxa (imposto, serviço)
+                20: "I-TAXA",              # Continuação de uma taxa
+                21: "B-NOME_FUNCIONARIO",  # Início do nome do funcionário
+                22: "I-NOME_FUNCIONARIO",  # Continuação do nome do funcionário
+                23: "B-CIDADE",            # Início do nome da cidade
+                24: "I-CIDADE",            # Continuação do nome da cidade
+                25: "B-LOCAL_HOSPEDAGEM",  # Início do local de hospedagem
+                26: "I-LOCAL_HOSPEDAGEM"   # Continuação do local de hospedagem
+            }
             self.model.config.label2id = {v: k for k, v in self.model.config.id2label.items()}
         
         self.model.to(self.device)
@@ -279,10 +306,99 @@ class ExpenseReportExtractor:
                 details_df.to_excel(writer, sheet_name="Detalhes", index=False)
         
         print(f"Relatório exportado para: {output_path}")
+        
+    def generate_text_report(self, summary: Dict, output_path: str) -> None:
+        """
+        Gera um relatório de texto com as conclusões do modelo LayoutLMv3 e valores identificados por regex.
+        O relatório é dividido em duas partes:
+        1. Conclusões do modelo LayoutLMv3
+        2. Valores identificados por expressões regulares
+        """
+        with open(output_path, 'w', encoding='utf-8') as f:
+            # Cabeçalho
+            f.write("=" * 80 + "\n")
+            f.write("RELATÓRIO DE DESCOBERTA - R2BIT TRIPAUDIT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            # Data e hora atual
+            from datetime import datetime
+            f.write(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
+            f.write(f"Total de páginas analisadas: {summary['pages']}\n\n")
+            
+            # PARTE 1: Conclusões do modelo LayoutLMv3
+            f.write("PARTE 1: CONCLUSÕES DO MODELO LAYOUTLMV3\n")
+            f.write("-" * 50 + "\n\n")
+            
+            # Entidades extraídas pelo modelo
+            all_entities = []
+            for page in summary["expenses"]:
+                for entity in page["entities"]:
+                    all_entities.append((page["page"], entity["label"], entity["text"]))
+            
+            if all_entities:
+                # Agrupar por tipo de entidade
+                entity_types = {}
+                for page, label, text in all_entities:
+                    if label not in entity_types:
+                        entity_types[label] = []
+                    entity_types[label].append((page, text))
+                
+                # Escrever entidades agrupadas
+                for label, occurrences in entity_types.items():
+                    f.write(f"Entidade: {label}\n")
+                    for page, text in occurrences:
+                        f.write(f"  - Página {page}: {text}\n")
+                    f.write("\n")
+            else:
+                f.write("Nenhuma entidade foi extraída pelo modelo LayoutLMv3.\n\n")
+            
+            # PARTE 2: Valores identificados por regex
+            f.write("\nPARTE 2: VALORES IDENTIFICADOS POR EXPRESSÕES REGULARES\n")
+            f.write("-" * 50 + "\n\n")
+            
+            # Valores monetários
+            f.write("Valores monetários:\n")
+            all_values = []
+            for page in summary["expenses"]:
+                for i, value in enumerate(page["values_found"]):
+                    float_value = page["values_float"][i] if i < len(page["values_float"]) else None
+                    all_values.append((page["page"], value, float_value))
+            
+            if all_values:
+                for page, value, float_value in all_values:
+                    f.write(f"  - Página {page}: {value} (valor numérico: {float_value})\n")
+            else:
+                f.write("  Nenhum valor monetário encontrado.\n")
+            
+            # Datas
+            f.write("\nDatas encontradas:\n")
+            all_dates = []
+            for page in summary["expenses"]:
+                for date in page["dates"]:
+                    all_dates.append((page["page"], date))
+            
+            if all_dates:
+                for page, date in all_dates:
+                    f.write(f"  - Página {page}: {date}\n")
+            else:
+                f.write("  Nenhuma data encontrada.\n")
+            
+            # Categorias
+            f.write("\nCategorias identificadas:\n")
+            for category, count in summary["categories"].items():
+                f.write(f"  - {category}: {count} ocorrência(s)\n")
+            
+            # Resumo final
+            f.write("\n" + "=" * 80 + "\n")
+            f.write(f"VALOR TOTAL EXTRAÍDO: R$ {summary['total_value']:.2f}\n")
+            f.write("=" * 80 + "\n")
+        
+        print(f"Relatório de texto exportado para: {output_path}")
 
 
 def main():
     import argparse
+    import os.path
     
     parser = argparse.ArgumentParser(description="Extrai informações de relatórios de despesas em PDF")
     parser.add_argument("pdf_path", help="Caminho para o arquivo PDF do relatório de despesas")
@@ -318,6 +434,10 @@ def main():
     
     # Exportar para Excel
     extractor.export_to_excel(resumo, args.output)
+    
+    # Gerar relatório de texto com descobertas
+    text_report_path = os.path.join(os.path.dirname(args.output), "discovery_summary.txt")
+    extractor.generate_text_report(resumo, text_report_path)
     
     return 0
 
