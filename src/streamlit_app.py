@@ -7,14 +7,12 @@ import os
 import sys
 import streamlit as st
 from pathlib import Path
-import tempfile
 
 # Add project directory to PATH for imports
 project_root = Path(__file__).parent.parent.absolute()
 sys.path.append(str(project_root))
 
-from src.extract_expenses import ExpenseReportExtractor
-from src.data_preparation import ExpenseReportPreprocessor
+from src.audit_expenses import ExpenseAuditor
 import src.config as config
 
 # Set page configuration
@@ -24,39 +22,7 @@ st.set_page_config(
     layout="wide"
 )
 
-def audit_and_report(pdf_path):
-    """
-    Process a PDF expense report and generate a text summary.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        
-    Returns:
-        Dictionary containing the summary and paths to generated files
-    """
-    # Create output directory
-    output_dir = os.path.join(config.OUTPUT_DIR, "streamlit_output")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 1. Pre-process the PDF
-    preprocessor = ExpenseReportPreprocessor()
-    processed_dir = os.path.join(output_dir, "preprocessed")
-    results = preprocessor.process_pdf(pdf_path, output_dir=processed_dir)
-    
-    # 2. Extract information with LayoutLMv3
-    extractor = ExpenseReportExtractor()
-    summary = extractor.summarize_expense_report(pdf_path)
-    
-    # 3. Generate text report
-    text_report_path = os.path.join(output_dir, "discovery_summary.txt")
-    extractor.generate_text_report(summary, text_report_path)
-    
-    return {
-        "pdf_path": pdf_path,
-        "processed_dir": processed_dir,
-        "text_report_path": text_report_path,
-        "summary": summary
-    }
+
 
 def main():
     # Header
@@ -103,15 +69,11 @@ def main():
     
     # Main content area for results
     if uploaded_file is not None and process_button:
-        # Save the uploaded file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            pdf_path = tmp_file.name
-        
         with st.spinner("Processando o relatório de despesas..."):
             try:
-                # Process the PDF
-                results = audit_and_report(pdf_path)
+                # Create auditor and process the file
+                auditor = ExpenseAuditor()
+                results = auditor.process_uploaded_file(uploaded_file)
                 
                 # Display success message
                 st.success("Processamento concluído com sucesso!")
@@ -155,11 +117,7 @@ def main():
                 st.error(f"Erro ao processar o arquivo: {str(e)}")
                 st.exception(e)
             
-            # Clean up the temporary file
-            try:
-                os.unlink(pdf_path)
-            except:
-                pass
+            # Temporary file cleanup is handled by ExpenseAuditor
 
 if __name__ == "__main__":
     main()
