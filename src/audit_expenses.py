@@ -49,12 +49,24 @@ class ExpenseAuditor:
         text_report_path = os.path.join(output_dir, "discovery_summary.txt")
         self.extractor.generate_text_report(summary, text_report_path)
         
-        return {
+        # Read the text report content
+        text_report_content = ""
+        try:
+            with open(text_report_path, "r", encoding="utf-8") as f:
+                text_report_content = f.read()
+        except Exception as e:
+            print(f"Error reading text report: {str(e)}")
+        
+        # 4. Create result dictionary with summary, paths, and text content
+        audit_results = {
             "pdf_path": pdf_path,
             "processed_dir": processed_dir,
             "text_report_path": text_report_path,
+            "text_report_content": text_report_content,
             "summary": summary
         }
+        
+        return audit_results
     
     def process_uploaded_file(self, uploaded_file):
         """

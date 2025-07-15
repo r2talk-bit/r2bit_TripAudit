@@ -7,12 +7,17 @@ import os
 import sys
 import streamlit as st
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Add project directory to PATH for imports
 project_root = Path(__file__).parent.parent.absolute()
 sys.path.append(str(project_root))
 
+# Load environment variables from .env file
+load_dotenv(os.path.join(project_root, '.env'))
+
 from src.audit_expenses import ExpenseAuditor
+from src.agent_graph.agentic_auditor import run_agentic_auditor
 import src.config as config
 
 # Set page configuration
@@ -58,7 +63,20 @@ def main():
         st.header("Upload de Arquivo")
         uploaded_file = st.file_uploader("Selecione um relatório de despesas em PDF", type=["pdf"])
         
-        process_button = st.button("Processar Relatório", type="primary")
+        # Check if API key is already in environment variables
+        api_key_env = os.environ.get("OPENAI_API_KEY", "")
+        api_key_placeholder = "API Key já configurada no arquivo .env" if api_key_env else ""
+        
+        # API key input for OpenAI
+        api_key = st.text_input(
+            "OpenAI API Key", 
+            type="password",
+            placeholder=api_key_placeholder,
+            help="Necessário para gerar emails de aprovação. Pode ser configurado no arquivo .env"
+        )
+        
+        # Single button to process report and generate email
+        process_button = st.button("Auditar Relatório de Despesas", type="primary")
         
         if uploaded_file is not None:
             st.success("Arquivo carregado com sucesso!")
@@ -69,52 +87,70 @@ def main():
     
     # Main content area for results
     if uploaded_file is not None and process_button:
-        with st.spinner("Processando o relatório de despesas..."):
+        # Set API key if provided
+        if api_key:
+            os.environ["OPENAI_API_KEY"] = api_key
+        
+        # Check if OpenAI API key is available
+        if not os.environ.get("OPENAI_API_KEY"):
+            st.error("API Key da OpenAI não encontrada. Por favor, forneça uma API Key ou configure-a no arquivo .env.")
+            st.stop()
+        
+        # Process expense report
+        with st.spinner("Processando o relatório de despesas e gerando email de aprovação..."):
             try:
-                # Create auditor and process the file
+                # Step 1: Create auditor and process the file
                 auditor = ExpenseAuditor()
                 results = auditor.process_uploaded_file(uploaded_file)
                 
-                # Display success message
-                st.success("Processamento concluído com sucesso!")
+                # Step 2: Run the agentic workflow to generate approval email
+                workflow_results = run_agentic_auditor(results)
                 
-                # Display summary information
-                st.header("Resumo da Análise")
+                # Display results
+                st.success("Processamento e geração de email concluídos com sucesso!")
                 
-                col1, col2 = st.columns(2)
+                # Display only the approval email
+                st.header("Email de Aprovação")
                 
-                with col1:
-                    st.metric("Total de Páginas", results["summary"]["pages"])
-                    st.metric("Valor Total", f"R$ {results['summary']['total_value']:.2f}")
-                
-                with col2:
-                    st.metric("Datas Encontradas", len(results["summary"]["dates"]))
-                    st.metric("Categorias", len(results["summary"]["categories"]))
-                
-                # Display categories
-                st.subheader("Categorias Identificadas")
-                for category, count in results["summary"]["categories"].items():
-                    st.write(f"- {category}: {count} ocorrência(s)")
-                
-                # Display text report
-                st.subheader("Relatório Detalhado")
-                with open(results["text_report_path"], "r", encoding="utf-8") as f:
-                    report_text = f.read()
-                
-                st.text_area("", report_text, height=400)
-                
-                # Download button for the report
-                with open(results["text_report_path"], "r", encoding="utf-8") as f:
-                    report_content = f.read()
+                if workflow_results["error"]:
+                    st.error(f"Erro ao gerar email: {workflow_results['error']}")
+                else:
+                    email = workflow_results["email_content"]
+                    
+                    # Email header
+                    st.subheader(f"Assunto: {email['subject']}")
+                    st.write(f"**Para:** {email['recipient']}")
+                    
+                    # Email body
+                    st.markdown("---")
+                    st.write("**Corpo do Email:**")
+                    st.write(email['body'])
+                    st.markdown("---")
+                    
+                    # Approval status
+                    status_color = "green" if email['approval_status'] == "Approved" else \
+                                  "orange" if email['approval_status'] == "Needs Review" else "red"
+                    
+                    st.markdown(f"**Status de Aprovação:** <span style='color:{status_color}'>{email['approval_status']}</span>", unsafe_allow_html=True)
+                    st.write("**Comentários:**")
+                    st.write(email['approval_comments'])
+                    
+                    # Create email content for download
+                    email_content = f"Assunto: {email['subject']}\n"
+                    email_content += f"Para: {email['recipient']}\n\n"
+                    email_content += f"{email['body']}\n\n"
+                    email_content += f"Status de Aprovação: {email['approval_status']}\n"
+                    email_content += f"Comentários: {email['approval_comments']}"
+                    
+                    # Download button for the email
                     st.download_button(
-                        label="Baixar Relatório",
-                        data=report_content,
-                        file_name="discovery_summary.txt",
+                        label="Baixar Email",
+                        data=email_content,
+                        file_name="approval_email.txt",
                         mime="text/plain"
                     )
-                
             except Exception as e:
-                st.error(f"Erro ao processar o arquivo: {str(e)}")
+                st.error(f"Erro ao processar o relatório: {str(e)}")
                 st.exception(e)
             
             # Temporary file cleanup is handled by ExpenseAuditor
