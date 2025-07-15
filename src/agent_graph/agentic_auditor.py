@@ -110,12 +110,12 @@ def generate_approval_email(state: WorkflowState) -> Dict[str, Any]:
         2. A brief introduction explaining the purpose of the email
         3. A clearly formatted expense summary using plain text formatting only (NO HTML). Format it as follows:
            
-           Expense Category | Date | Amount (R$) | Vendor
-           ----------------|------|------------|-------
-           [Category 1]    | [Date]| [Amount]   | [Vendor]
-           [Category 2]    | [Date]| [Amount]   | [Vendor]
-           ----------------|------|------------|-------
-           TOTAL           |      | [Total]    |
+           Expense Category | Date   | Amount (R$) | Vendor
+           -----------------|--------|-------------|-------
+           [Category 1]     | [Date] | [Amount]    | [Vendor]
+           [Category 2]     | [Date] | [Amount]    | [Vendor]
+           -----------------|--------|-------------|-------
+           TOTAL            |        | [Total]     |
            
         4. A summary of the total expense amount
         5. A recommendation for approval or further review
