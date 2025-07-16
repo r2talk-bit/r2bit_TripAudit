@@ -5,6 +5,9 @@ env/
 .venv/
 ENV/
 
+# Development utilities
+dev_utils/
+
 # Environment variables
 .env
 
