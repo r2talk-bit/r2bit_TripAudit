@@ -25,7 +25,7 @@ sys.path.append(str(project_root))  # Add the project root to the Python path
 # Import our custom modules for expense auditing - using relative imports
 # The imports need to come after adding the project root to sys.path
 from audit_expenses import ExpenseAuditor  # Handles the core expense report processing
-from agent_graph.agentic_auditor import run_agentic_auditor  # Runs the AI agent workflow
+from agentic_auditor import run_agentic_auditor  # Runs the AI agent workflow
 
 # Load environment variables from .env file
 # This allows us to store sensitive information like API keys outside of the code

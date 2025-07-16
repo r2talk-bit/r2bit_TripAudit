@@ -21,10 +21,7 @@ import traceback   # For detailed error information
 from typing import Dict, TypedDict, List, Optional, Annotated, Any  # Type hints for better code clarity
 from pathlib import Path  # Object-oriented filesystem paths
 
-# Add parent directory to path to import from src
-# This is necessary because Python imports are relative to the script's location
-# This approach allows us to import modules from the parent directory
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# No need to add parent directory to path since we're already in the src directory
 
 # Third-party imports
 from openai import OpenAI  # OpenAI API client for generating email content
@@ -36,7 +33,7 @@ from audit_expenses import ExpenseAuditor  # Our custom module for expense audit
 
 # Load environment variables from .env file
 # This loads API keys and other configuration from a .env file in the project root
-project_root = Path(__file__).parent.parent.parent.absolute()  # Get absolute path to project root
+project_root = Path(__file__).parent.parent.absolute()  # Get absolute path to project root
 load_dotenv(os.path.join(project_root, '.env'))  # Load variables from .env file
 
 
