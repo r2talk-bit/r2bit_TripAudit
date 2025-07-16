@@ -29,8 +29,8 @@ from langgraph.graph import StateGraph, END  # LangGraph for workflow orchestrat
 from dotenv import load_dotenv  # For loading environment variables from .env file
 
 # Local application imports
-# Import ReportExtractor directly to avoid circular imports
-from f1_2_layoutlm_info_process import ExpenseReportExtractor  # For direct access to the report extractor
+# Import functions directly to avoid circular imports
+from f1_2_layoutlm_info_process import extract_from_pdf, generate_text_report_wrapper  # Direct function imports
 
 # Load environment variables from .env file
 # This loads API keys and other configuration from a .env file in the project root

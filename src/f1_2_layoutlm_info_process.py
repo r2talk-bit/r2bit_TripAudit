@@ -677,51 +677,34 @@ def main():
         return 1  # Error exit code
 
 
-class ExpenseReportExtractor:
+def extract_from_pdf(pdf_path: str) -> Dict:
     """
-    Class for extracting information from expense reports using LayoutLMv3.
-    This class wraps the functional API to provide an object-oriented interface.
+    Process a PDF expense report and extract information.
+    
+    Args:
+        pdf_path: Path to the PDF file to process
+        
+    Returns:
+        Dictionary with extracted information
     """
+    return summarize_expense_report(pdf_path)
+
+
+def generate_text_report_wrapper(summary: Dict, output_path: str) -> None:
+    """
+    Generate a text report from the extracted information.
     
-    def __init__(self, model_name=MODEL_NAME, device=DEVICE, tesseract_lang=TESSERACT_LANG):
-        """
-        Initialize the expense report extractor with model and configuration.
-        
-        Args:
-            model_name: Name or path of the pre-trained model
-            device: Device to run the model on (CPU or GPU)
-            tesseract_lang: Language for OCR
-        """
-        self.model_name = model_name
-        self.device = device
-        self.tesseract_lang = tesseract_lang
-        # Initialize the model when the extractor is created
-        self.processor, self.model = initialize_model(model_name, device, tesseract_lang)
-    
-    def extract_from_pdf(self, pdf_path: str) -> Dict:
-        """
-        Process a PDF expense report and extract information.
-        
-        Args:
-            pdf_path: Path to the PDF file to process
-            
-        Returns:
-            Dictionary with extracted information
-        """
-        return summarize_expense_report(pdf_path)
-    
-    def generate_text_report(self, summary: Dict, output_path: str) -> None:
-        """
-        Generate a text report from the extracted information.
-        
-        Args:
-            summary: Dictionary with extracted information
-            output_path: Path to save the text report
-        """
-        generate_text_report(summary, output_path)
+    Args:
+        summary: Dictionary with extracted information
+        output_path: Path to save the text report
+    """
+    generate_text_report(summary, output_path)
 
 
 if __name__ == "__main__":
     # This block executes when the script is run directly (not imported)
     # Call the main function and use its return value as the exit code
     exit(main())
+else:
+    # Initialize the model when the module is imported
+    initialize_model()

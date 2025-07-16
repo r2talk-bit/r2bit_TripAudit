@@ -13,30 +13,10 @@ import tempfile  # For creating temporary files securely
 from pathlib import Path  # Object-oriented filesystem paths
 
 # Custom module imports for expense report processing
-from f1_2_layoutlm_info_process import ExpenseReportExtractor  # Handles information extraction using LayoutLMv3
+from f1_2_layoutlm_info_process import extract_from_pdf, generate_text_report_wrapper  # Direct function imports
 # Import the functions from the OCR process module
 from f1_2_1_ocr_process import process_pdf  # Handles PDF preprocessing and OCR
 import config  # Application configuration settings
-
-# Module-level initialization of components
-# Only the extractor needs to be initialized as we're using functional approach for OCR
-_extractor = None
-
-def _get_extractor():
-    """
-    Get or initialize the extractor component.
-    
-    This function implements lazy initialization of the extractor component,
-    creating it only when first needed and then reusing it.
-    
-    Returns:
-        The extractor instance
-    """
-    global _extractor
-    if _extractor is None:
-        # Create an instance of the extractor that uses LayoutLMv3 for information extraction
-        _extractor = ExpenseReportExtractor()
-    return _extractor
 
 def extract_report_data(pdf_path) -> dict:
     """
@@ -55,8 +35,7 @@ def extract_report_data(pdf_path) -> dict:
     Returns:
         Dictionary containing the summary and paths to generated files
     """
-    # Get the extractor component
-    extractor = _get_extractor()
+    # No need to get an extractor instance anymore
     
     # Create output directory for storing all processing results
     # The base output directory is defined in the config module
@@ -75,14 +54,14 @@ def extract_report_data(pdf_path) -> dict:
     # LayoutLMv3 is a document understanding model that can recognize text and layout
     # It uses the enhanced label configuration with 23 different categories for detailed extraction
     # The model processes the document and extracts structured information like amounts, dates, vendors, etc.
-    summary = extractor.extract_from_pdf(pdf_path)
+    summary = extract_from_pdf(pdf_path)
     
     # 3. Generate a human-readable text report from the extracted information
     # Define the output path for the text report
     text_report_path = os.path.join(output_dir, "discovery_summary.txt")
     # Convert the structured summary data into a formatted text report
     # This makes the extracted information easier to read and understand
-    extractor.generate_text_report(summary, text_report_path)
+    generate_text_report_wrapper(summary, text_report_path)
     
     # Read the generated text report content into memory
     # This allows us to return the content directly without requiring another file read operation
