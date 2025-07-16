@@ -29,7 +29,8 @@ from langgraph.graph import StateGraph, END  # LangGraph for workflow orchestrat
 from dotenv import load_dotenv  # For loading environment variables from .env file
 
 # Local application imports
-from audit_expenses import ExpenseAuditor  # Our custom module for expense auditing
+# Import ReportExtractor directly to avoid circular imports
+from f1_2_layoutlm_info_process import ExpenseReportExtractor  # For direct access to the report extractor
 
 # Load environment variables from .env file
 # This loads API keys and other configuration from a .env file in the project root
@@ -513,14 +514,14 @@ def process_expense_report(pdf_path: str) -> Dict[str, Any]:
         Dict containing the audit results, generated email, and any error messages
     """
     try:
-        # Step 1: Create an ExpenseAuditor instance and process the expense report
-        # The ExpenseAuditor handles the extraction of information from the PDF
+        # Step 1: Create a ReportExtractor instance directly and process the expense report
+        # The ReportExtractor handles the extraction of information from the PDF
         # using LayoutLMv3 model and OCR (currently using English language data)
-        auditor = ExpenseAuditor()
+        report_extractor = ExpenseReportExtractor()
         
         # Process the PDF and get structured audit results
         # This includes extracting monetary values, dates, and expense categories
-        audit_results = auditor.audit_expense_report(pdf_path)
+        audit_results = report_extractor.extract_info_from_file(pdf_path)
         
         # Step 2: Run the agentic workflow to generate an approval email
         # The workflow analyzes the audit results and generates a professional email

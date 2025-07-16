@@ -25,7 +25,7 @@ sys.path.append(str(project_root))  # Add the project root to the Python path
 # Import our custom modules for expense auditing - using relative imports
 # The imports need to come after adding the project root to sys.path
 from audit_expenses import ExpenseAuditor  # Handles the core expense report processing
-from agentic_auditor import run_agentic_auditor  # Runs the AI agent workflow
+from f2_agentic_audit import run_agentic_auditor  # Runs the AI agent workflow
 
 # Load environment variables from .env file
 # This allows us to store sensitive information like API keys outside of the code
@@ -128,17 +128,14 @@ def main():
         with st.spinner("Processando o relatório de despesas e gerando email de aprovação..."):
             # Use try-except to handle any errors that might occur during processing
             try:
-                # Step 1: Create an ExpenseAuditor instance and process the uploaded file
-                # The ExpenseAuditor class handles the document processing and information extraction
+                # Create an ExpenseAuditor instance and use the process_and_audit method
+                # This method handles both the document processing and the agentic auditing
                 auditor = ExpenseAuditor()
-                # Process the file and get the extracted information
-                # This includes OCR, table extraction, and entity recognition using LayoutLMv3
-                results = auditor.process_uploaded_file(uploaded_file)
+                # Process the file and get the combined results
+                combined_results = auditor.process_and_audit(uploaded_file)
                 
-                # Step 2: Run the AI agent workflow to analyze the data and generate an approval email
-                # The agentic_auditor uses AI to make decisions about the expense report
-                # It determines if the expenses are valid, need review, or should be rejected
-                workflow_results = run_agentic_auditor(results)
+                # Extract the workflow results containing the email content
+                agentic_analysis = combined_results["agentic_analysis"]
                 
                 # Display a success message when processing is complete
                 # This provides visual feedback that the operation was successful
@@ -148,12 +145,12 @@ def main():
                 st.header("Email de Aprovação")
                 
                 # Check if there was an error in the workflow results
-                if workflow_results["error"]:
+                if agentic_analysis["error"]:
                     # Display error message with red background if there was an error
-                    st.error(f"Erro ao gerar email: {workflow_results['error']}")
+                    st.error(f"Erro ao gerar email: {agentic_analysis['error']}")
                 else:  # If no error, proceed to display the email content
                     # Extract the email content from the workflow results
-                    email = workflow_results["email_content"]
+                    email = agentic_analysis["email_content"]
                     
                     # Display the email header information (subject and recipient)
                     st.subheader(f"Assunto: {email['subject']}")  # Display email subject as a subheader
