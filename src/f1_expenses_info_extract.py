@@ -14,32 +14,29 @@ from pathlib import Path  # Object-oriented filesystem paths
 
 # Custom module imports for expense report processing
 from f1_2_layoutlm_info_process import ExpenseReportExtractor  # Handles information extraction using LayoutLMv3
-from f1_2_1_ocr_process import ExpenseReportPreprocessor  # Handles PDF preprocessing and OCR
+# Import the functions from the OCR process module
+from f1_2_1_ocr_process import process_pdf  # Handles PDF preprocessing and OCR
 import config  # Application configuration settings
 
 # Module-level initialization of components
-# These will be lazily initialized when needed
-_preprocessor = None
+# Only the extractor needs to be initialized as we're using functional approach for OCR
 _extractor = None
 
-def _get_components():
+def _get_extractor():
     """
-    Get or initialize the preprocessor and extractor components.
+    Get or initialize the extractor component.
     
-    This function implements lazy initialization of the components,
-    creating them only when they are first needed and then reusing them.
+    This function implements lazy initialization of the extractor component,
+    creating it only when first needed and then reusing it.
     
     Returns:
-        Tuple containing (preprocessor, extractor) instances
+        The extractor instance
     """
-    global _preprocessor, _extractor
-    if _preprocessor is None:
-        # Create an instance of the preprocessor that handles PDF conversion and image processing
-        _preprocessor = ExpenseReportPreprocessor()
+    global _extractor
     if _extractor is None:
         # Create an instance of the extractor that uses LayoutLMv3 for information extraction
         _extractor = ExpenseReportExtractor()
-    return _preprocessor, _extractor
+    return _extractor
 
 def extract_report_data(pdf_path) -> dict:
     """
@@ -58,8 +55,8 @@ def extract_report_data(pdf_path) -> dict:
     Returns:
         Dictionary containing the summary and paths to generated files
     """
-    # Get the preprocessor and extractor components
-    preprocessor, extractor = _get_components()
+    # Get the extractor component
+    extractor = _get_extractor()
     
     # Create output directory for storing all processing results
     # The base output directory is defined in the config module
@@ -70,9 +67,9 @@ def extract_report_data(pdf_path) -> dict:
     # 1. Pre-process the PDF document
     # Create a subdirectory for preprocessed files (images, extracted tables)
     processed_dir = os.path.join(output_dir, "preprocessed")
-    # Call the preprocessor to convert PDF to images and extract tables
+    # Call the process_pdf function to convert PDF to images and extract tables
     # The img2table library is used here for table extraction from images
-    results = preprocessor.process_pdf(pdf_path, output_dir=processed_dir)
+    results = process_pdf(pdf_path, output_dir=processed_dir)
     
     # 2. Extract information with LayoutLMv3 model
     # LayoutLMv3 is a document understanding model that can recognize text and layout
