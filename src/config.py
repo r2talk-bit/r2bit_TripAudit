@@ -28,6 +28,12 @@ TESSERACT_CONFIG = "--oem 1 --psm 11"  # Modo de segmentação de página comple
 # Configurações de processamento de PDF
 PDF_DPI = 300  # Resolução para conversão de PDF para imagem
 
+# Configurações do auditor
+# Define qual implementação do auditor usar por padrão
+# False = usar o auditor original (f2_agentic_audit.py)
+# True = usar a nova implementação com equipe de agentes (f2_agent_team_audit.py)
+DEFAULT_USE_AGENT_TEAM = False
+
 # Categorias de despesas para classificação
 EXPENSE_CATEGORIES = {
     "hospedagem": ["hotel", "pousada", "hospedagem", "diária", "estadia", "acomodação"],
