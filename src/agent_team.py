@@ -15,18 +15,23 @@ import json
 import os
 import re
 import yaml
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, Callable, TypeVar
+from functools import wraps
 
 # Using local clean_markdown_text implementation
 
 # Import the policy management functions
 from policy_management import get_relevant_policies
+# Import utility functions from graph_utils
+from graph_utils import parse_llm_json_response, parse_json_response, extract_pdf_text
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 import langgraph
 from langgraph.graph import END, StateGraph
+
+from graph_utils import parse_llm_json_response, parse_json_response, extract_pdf_text, clean_markdown_text
 
 # Load environment variables from .env file in the project root
 from pathlib import Path
@@ -37,108 +42,38 @@ load_dotenv(os.path.join(project_root, '.env'))
 prompts_path = os.path.join(Path(__file__).parent.absolute(), 'prompts.yaml')
 with open(prompts_path, 'r', encoding='utf-8') as file:
     prompts = yaml.safe_load(file)
+    
 
-# Initialize the OpenAI client
-client = ChatOpenAI(model="gpt-4o")
-
-# Import OpenAI for direct API access if needed
-import openai
-openai_client = openai.OpenAI()
-
-def call_llm(system_message: str, user_message: str, fallback_response: str = None) -> str:
-    """Unified LLM client with fallback handling."""
-    try:
-        response = client.invoke([
-            SystemMessage(content=system_message),
-            HumanMessage(content=user_message)
-        ])
-        return response.content
-    except Exception as e:
-        print(f"LLM call failed: {e}")
-        if fallback_response:
-            return fallback_response
-        raise
-
-
-def handle_agent_errors(agent_name: str):
-    """Decorator to handle common agent errors."""
-    def decorator(func):
-        def wrapper(state: WorkflowState) -> Dict[str, Any]:
-            if state.get("error"):
-                return {}
-            try:
-                return func(state)
-            except Exception as e:
-                return {"error": f"Error in {agent_name}: {str(e)}"}
-        return wrapper
-    return decorator
-
-import ast
-
-def parse_llm_json_response(content: str, fallback: Dict[str, Any] = None) -> Dict[str, Any]:
+def remove_duplicate_policies(policies):
     """
-    Unified JSON parser for LLM responses with multiple fallback strategies.
+    Remove duplicate policies based on their ID and chunk index.
     
     Args:
-        content: The raw text response from the LLM
-        fallback: Optional fallback dictionary to return if all parsing strategies fail
+        policies: List of policy dictionaries returned from get_relevant_policies
         
     Returns:
-        Parsed JSON as a dictionary, or the fallback dictionary if parsing fails
+        List of unique policies with duplicates removed
     """
-    if not content:
-        return fallback or {"error": "Empty content"}
-        
-    # Define multiple parsing strategies
-    parsing_strategies = [
-        # Strategy 1: Extract JSON from markdown code blocks
-        lambda c: json.loads(re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', c).group(1)),
-        # Strategy 2: Extract JSON without markdown formatting
-        lambda c: json.loads(re.search(r'({[\s\S]*})', c).group(1)),
-        # Strategy 3: Try direct JSON parsing
-        lambda c: json.loads(c),
-        # Strategy 4: Clean control characters and try parsing
-        lambda c: json.loads(''.join(char for char in c if ord(char) >= 32 or char in '\t\n\r')),
-        # Strategy 5: Try using ast.literal_eval with quote normalization
-        lambda c: ast.literal_eval(c.replace("'", "\""))
-    ]
+    unique_policies = []
+    seen_ids = set()  # Set to track unique policy IDs
     
-    # Try each strategy in sequence
-    for strategy in parsing_strategies:
-        try:
-            return strategy(content)
-        except (json.JSONDecodeError, AttributeError, ValueError, SyntaxError):
-            continue
-    
-    # If all strategies fail, log the error and return fallback
-    print(f"Failed to parse JSON response with all strategies")
-    print(f"Raw content: {content[:200]}..." if len(content) > 200 else content)
-    
-    # Return provided fallback or default fallback
-    return fallback or {
-        "error": "Failed to parse JSON response",
-        "expense_categories_identified": ["unknown"],
-        "queries": [{"query": "expense policies"}, {"query": "reimbursement rules"}]
-    }
+    for policy in policies:
+        # Create a unique identifier using policy_id and chunk_index from metadata
+        if 'id' in policy and 'metadata' in policy and 'chunk_index' in policy['metadata']:
+            unique_id = f"{policy['id']}_{policy['metadata']['chunk_index']}"
+            if unique_id not in seen_ids:
+                seen_ids.add(unique_id)
+                unique_policies.append(policy)
+        else:
+            # If the policy doesn't have the expected structure, include it anyway
+            unique_policies.append(policy)
+            
+    return unique_policies
 
-# Keep backward compatibility with existing code
-def parse_json_response(content: str) -> Dict[str, Any]:
-    """
-    Legacy wrapper for parse_llm_json_response for backward compatibility.
-    
-    Args:
-        content: The raw text response from the LLM
-        
-    Returns:
-        Parsed JSON as a dictionary, or a fallback dictionary if parsing fails
-    """
-    fallback = {
-        "expense_categories_identified": ["unknown"],
-        "queries": [{"query": "expense policies"}, {"query": "reimbursement rules"}]
-    }
-    return parse_llm_json_response(content, fallback)
 
+#
 # Define the workflow state structure
+#
 class WorkflowState(TypedDict):
     """
     State object for the expense audit workflow.
@@ -158,29 +93,50 @@ class WorkflowState(TypedDict):
     email_content: Dict[str, str]
     error: str
 
+
+# Initialize the OpenAI client
+# client = ChatOpenAI(model="gpt-4o")
+client = ChatOpenAI(model="gpt-3.5-turbo")
+
+# Import OpenAI for direct API access if needed
+import openai
+openai_client = openai.OpenAI()
+
+#
+# LLM Call
+#
+def call_llm(system_message: str, user_message: str, fallback_response: str = None) -> str:
+    try:
+        response = client.invoke([
+            SystemMessage(content=system_message),
+            HumanMessage(content=user_message)
+        ])
+        return response.content
+    except Exception as e:
+        print(f"LLM call failed: {e}")
+        if fallback_response:
+            return fallback_response
+        raise
+
+def handle_agent_errors(agent_name: str):
+    """Decorator to handle common agent errors."""
+    def decorator(func):
+        def wrapper(state: WorkflowState) -> Dict[str, Any]:
+            if state.get("error"):
+                return {}
+            try:
+                return func(state)
+            except Exception as e:
+                return {"error": f"Error in {agent_name}: {str(e)}"}
+        return wrapper
+    return decorator
+
+# Type variable for the decorator
+T = TypeVar('T')
+
+#
 # Define helper functions
-
-def extract_pdf_text(pdf_path: str) -> str:
-    """
-    Extract text content from a PDF file.
-    
-    Args:
-        pdf_path: Path to the PDF file
-        
-    Returns:
-        Extracted text content from the PDF
-    """
-    import pypdf
-    
-    pdf_text = ""
-    with open(pdf_path, 'rb') as file:
-        pdf_reader = pypdf.PdfReader(file)
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            pdf_text += page.extract_text() + "\n\n"
-    
-    return pdf_text
-
+#
 def format_policies(policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Format policies for the compliance check agent.
@@ -239,89 +195,6 @@ def get_policy_type(policy: Dict[str, Any]) -> str:
     else:
         return "other"
 
-def ensure_critical_policies(policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Ensure critical company policies are present, add if missing.
-    
-    Args:
-        policies: List of formatted policies
-        
-    Returns:
-        Updated list of policies with critical policies included
-    """
-    critical_policies = {
-        "meals": {
-            "policy_id": "company-policy-meals",
-            "policy_title": "Meal Expense Policy",
-            "description": "The company does not pay for meals. Meals are not reimbursable expenses.",
-            "content": "The company does not pay for meals. Meals are not reimbursable expenses.",
-            "category": "Meals",
-            "applicability_reason": "This policy applies to all meal expenses in the expense report.",
-            "priority": "high"
-        },
-        "max_amount": {
-            "policy_id": "company-policy-max-amount", 
-            "policy_title": "Maximum Reimbursement Limit",
-            "description": "Total reimbursement amount cannot exceed R$5,000.00 as the maximum value.",
-            "content": "Total reimbursement amount cannot exceed R$5,000.00 as the maximum value.",
-            "category": "Limits",
-            "applicability_reason": "This policy applies to the total amount of all expenses in the report.",
-            "priority": "high"
-        }
-    }
-    
-    # Check which policy types are already present
-    existing_types = {get_policy_type(p) for p in policies}
-    
-    # Add any missing critical policies
-    result = policies.copy()
-    for policy_type, policy in critical_policies.items():
-        if policy_type not in existing_types:
-            result.append(policy)
-    
-    return result
-
-def clean_markdown_text(text):
-    """
-    Limpa o texto para garantir formatação Markdown correta sem caracteres de escape indesejados.
-    
-    Args:
-        text: Texto a ser processado
-        
-    Returns:
-        Texto limpo com formatação Markdown adequada
-    """
-    if not text:
-        return text
-        
-    # Substituir sequências de escape literais por espaços ou caracteres adequados
-    text = text.replace('\\n', '\n')  # Substituir \n literal por quebra de linha real
-    text = text.replace('\\t', '    ')  # Substituir \t literal por espaços
-    text = text.replace('\\r', '')      # Remover \r literal
-    
-    # Corrigir aspas escapadas
-    text = text.replace('\\"', '"')
-    text = text.replace("\\'", "'")
-    
-    # Remover barras invertidas extras
-    text = text.replace('\\\\', '\\')
-    
-    # Garantir que tabelas Markdown estejam formatadas corretamente
-    lines = text.split('\n')
-    for i in range(len(lines)):
-        if '|' in lines[i] and '-|-' not in lines[i]:
-            # Verificar se esta linha pode ser um cabeçalho de tabela
-            if i < len(lines) - 1 and '|' in lines[i+1] and '-|-' in lines[i+1]:
-                continue  # Já está formatado corretamente
-            elif i > 0 and '|' in lines[i-1] and '-|-' in lines[i-1]:
-                continue  # Já está formatado corretamente
-            elif i < len(lines) - 1 and '|' in lines[i+1]:
-                # Adicionar linha separadora após cabeçalho
-                header_cols = lines[i].count('|') - 1 if lines[i].startswith('|') and lines[i].endswith('|') else lines[i].count('|') + 1
-                separator = '| ' + ' | '.join(['---'] * header_cols) + ' |'
-                lines.insert(i+1, separator)
-    
-    return '\n'.join(lines)
 
 # Define the agent functions
 
@@ -356,60 +229,89 @@ def parsing_agent(state: WorkflowState) -> Dict[str, Any]:
 @handle_agent_errors("policy_retrieval_agent")
 def policy_retrieval_agent(state: WorkflowState) -> Dict[str, Any]:
     """Retrieve relevant expense policies based on structured data."""
+    
+
     # Extract data from state
     structured_expenses = state["structured_expenses"]
     user_id = state.get("user_id", "default_user")
     
-    # Define default categories and queries to use if LLM analysis fails
-    default_categories = ["travel", "accommodation", "transportation"]
-    default_queries = ["expense policies", "reimbursement rules", "travel expense policies"]
+    # Use LLM to analyze expenses and generate queries
+    system_message = prompts["policy_retrieval_agent"]["system_message"]
     
-    # Try to get expense categories from structured data directly instead of relying on LLM
-    expense_categories = []
-    if "expense_items" in structured_expenses and isinstance(structured_expenses["expense_items"], list):
-        for item in structured_expenses["expense_items"]:
-            if isinstance(item, dict) and "category" in item:
-                category = item.get("category")
-                if category and category not in expense_categories:
-                    expense_categories.append(category)
+    # Convert the structured_expenses dictionary to a formatted JSON string
+    import json
+    structured_expenses_str = json.dumps(structured_expenses, indent=4)
     
-    # If no categories found in structured data, use defaults
-    if not expense_categories:
-        expense_categories = default_categories
+    # Format the prompt with the JSON string
+    user_message = prompts["policy_retrieval_agent"]["prompt"].format(structured_expenses=structured_expenses_str)
     
-    # Generate search queries based on expense categories
-    search_queries = list(default_queries)  # Start with default queries
-    for category in expense_categories:
-        search_queries.append(f"{category} expense policies")
+    # Call LLM to analyze expenses and generate queries
+    llm_response = call_llm(system_message, user_message)
+    
+    search_queries = []
+
+    # Process the plain text response from LLM
+    if llm_response and llm_response.strip():
+        # Split the response into lines and clean them
+        lines = [line.strip() for line in llm_response.split('\n') if line.strip()]
+        
+        # Extract lines that look like queries (typically containing a question or keywords)
+    
+        for line in lines:
+            # Remove bullet points, numbers, and other common prefixes
+            clean_line = re.sub(r'^[-*•●■□▪▫◆◇◈⬤⚫⚪⦿⊙⊚⊛⊜⊝⊗⊘⊙⊚⊛⊜⊝0-9.\s"]*', '', line).strip()
+            clean_line = clean_line.strip('"').strip("'").strip()
+            
+            # Skip empty lines or lines that are too short
+            if clean_line and len(clean_line) > 5:
+                search_queries.append(clean_line)
+    
+    # If no queries were extracted, use defaults
+    if not search_queries:
+        search_queries.append("list the refund rules")
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    search_queries = [q for q in search_queries if not (q in seen or seen.add(q))]
     
     # Get and combine policies for all queries
     all_policies = []
     for query in search_queries:
-        print(f"Searching for policies with query: {query}")
-        policies = get_relevant_policies({**structured_expenses, "query": query}, user_id)
+        policies = get_relevant_policies(query, user_id)
         all_policies.extend(policies)
     
+    # Remove duplicate policies
+    all_policies = remove_duplicate_policies(all_policies)
+        
     # Format policies for compliance checking
     formatted_policies = format_policies(all_policies)
     
-    # Ensure critical policies are included
-    formatted_policies = ensure_critical_policies(formatted_policies)
+    # Generate a readable report of the policies
+    from graph_utils import generate_formatted_policies_report
+    policy_report = generate_formatted_policies_report(formatted_policies)
+    print("\n" + "=" * 80)
+    print("FORMATTED POLICY REPORT:")
+    print("=" * 80)
+    print(policy_report)
+    print("=" * 80)
     
-    print(f"Retrieved {len(formatted_policies)} relevant policies")
-    
-    # Create policy analysis dictionary without relying on LLM parsing
-    policy_analysis = {
-        "expense_categories_identified": expense_categories
+    # Generate and print a human-readable report of the policies
+    from graph_utils import generate_policies_report
+    policy_data = {
+        "relevant_policies": formatted_policies
     }
-    
-    return {
-        "relevant_policies": formatted_policies,
-        "policy_analysis": policy_analysis
-    }
+    report = generate_policies_report(policy_data)
+    print("*" * 80)
+    print(report)
+    print("*" * 80)
 
+    return policy_data
+    
 @handle_agent_errors("compliance_check_agent")
 def compliance_check_agent(state: WorkflowState) -> Dict[str, Any]:
     """Checks expenses against company policies to determine compliance."""
+    
+    print("STARTING COMPLIANCE CHECK AGENT")
     # Extract data from state
     structured_expenses = state["structured_expenses"]
     relevant_policies = state["relevant_policies"]
@@ -471,6 +373,13 @@ def compliance_check_agent(state: WorkflowState) -> Dict[str, Any]:
     if "non_compliant_items" not in compliance_results:
         compliance_results["non_compliant_items"] = []
     
+
+    print("*" *50)
+    print("CHECK COMPLIANCE RESULT")
+    print(json.dumps(compliance_results, indent=4, ensure_ascii=False))
+    print("*" *50)
+    
+
     return {"compliance_results": compliance_results}
 
 @handle_agent_errors("cleanup_agent")

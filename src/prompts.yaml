@@ -70,18 +70,7 @@ policy_retrieval_agent:
        - "Accommodation expense approval requirements"
        - "General expense report guidelines"
 
-    Your response must be a valid JSON object with the following structure. Respond with JSON only (no markdown or extra text):
-
-    {
-      "expense_categories_identified": [string, ...],
-      "queries": [
-        {
-          "query": "string"
-        }
-      ]
-    }
-
-    If any required feature is missing, make reasonable inferences or omit related queries.
+    Your response must be a plain text with the queries created.
 
 # Compliance Check Agent
 compliance_check_agent:

@@ -528,12 +528,12 @@ def delete_specific_policies(user_id: str, policy_names: List[str]) -> int:
     
     return deleted_count
 
-def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results: int = 20) -> List[Dict[str, Any]]:
+def get_relevant_policies(query: str, user_id: str, n_results: int = 20) -> List[Dict[str, Any]]:
     """
-    Get policies relevant to an expense report.
+    Get policies relevant to an expense report using a plain text query.
     
     Args:
-        expense_data: Structured expense report data from WorkflowState
+        query: Plain text query to search for relevant policies
         user_id: ID of the user
         n_results: Number of results to return
         
@@ -541,66 +541,8 @@ def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results:
         List of relevant policy chunks
     """
     try:
-        # Initialize query with an instructional prompt that emphasizes key policy areas
-        query = "Find policy rules that specifically address and regulate the following expense items and their compliance requirements. Pay special attention to policies about MEAL EXPENSES and MAXIMUM REIMBURSEMENT LIMITS: "
-        
-        # Simple approach: directly convert expense_data dictionary to a string representation
-        # Handle top-level fields first
-        top_level_items = []
-        for key, value in expense_data.items():
-            # Skip expense_items as we'll process them separately
-            if key == 'expense_items':
-                continue
-                
-            # Add the key-value pair to our query
-            if value is not None:
-                top_level_items.append(f"{key}: {value}")
-        
-        # Add all top-level items to the query
-        if top_level_items:
-            query += ", ".join(top_level_items)
-        
-        # Process expense items if they exist
-        if 'expense_items' in expense_data and expense_data['expense_items']:
-            query += ". Expense items (pay special attention to meal expenses): "
-            
-            # Process each expense item
-            item_descriptions = []
-            for i, item in enumerate(expense_data['expense_items']):
-                item_parts = []
-                for item_key, item_value in item.items():
-                    if item_value is not None:
-                        item_parts.append(f"{item_key}: {item_value}")
-                
-                # Join all parts of this item
-                if item_parts:
-                    item_str = f"Item {i+1}: {', '.join(item_parts)}"
-                    item_descriptions.append(item_str)
-            
-            # Join all item descriptions
-            if item_descriptions:
-                query += "; ".join(item_descriptions)
-        
-        # Special handling for USD currency if present
-        if 'currency' in expense_data and expense_data['currency'] == 'USD':
-            query += ". This expense report includes USD currency transactions. Find relevant foreign currency and international travel expense policies."
-        
-        # Check for USD in expense items
-        has_usd_items = False
-        if 'expense_items' in expense_data:
-            for item in expense_data['expense_items']:
-                if 'currency_code' in item and item['currency_code'] == 'USD':
-                    has_usd_items = True
-                    break
-        
-        if has_usd_items:
-            query += ". Some expense items are in USD currency. Find relevant foreign currency policies."
-        
-        query += "Consider policy items that address value limits and types of expenses covered. IMPORTANT: Specifically identify any policies that restrict meal expenses or set maximum reimbursement limits."
-        
-        # STEP 3: Use the query to search for relevant policies
-        # Make sure we're calling search_policies with the correct parameters
-        # The function signature is: search_policies(query, user_id, n_results, policy_name)
+       
+        # Use the query to search for relevant policies
         results = search_policies(query=query, user_id=user_id, n_results=n_results)
         
         # Return the results
