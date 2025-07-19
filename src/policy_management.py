@@ -425,18 +425,6 @@ def load_policy_from_uploaded_file(
     # This delegates to our add_policy function which handles chunking and embedding
     return add_policy(policy_text, policy_name, user_id, policy_id, metadata)  # Pass all parameters to add_policy
 
-def add_default_company_policies(user_id: str) -> None:
-    """
-    This function previously added default company policies for a user.
-    It has been modified to be a no-op as the system now relies only on uploaded policies.
-    
-    Args:
-        user_id: ID of the user (no longer used)
-    """
-    # No longer adding default policies - system will rely only on uploaded policies
-    pass
-        # in the get_relevant_policies function
-
 def add_policy_without_embeddings(policy_text: str, policy_name: str, user_id: str, policy_id: str) -> str:
     """
     Add a policy document to the vector database without using embeddings.
@@ -478,10 +466,8 @@ def add_policy_without_embeddings(policy_text: str, policy_name: str, user_id: s
             documents=[policy_text]
         )
         
-        print(f"Successfully added policy {policy_name} without embeddings")
         return policy_id
     except Exception as e:
-        print(f"Error in add_policy_without_embeddings: {str(e)}")
         return policy_id
 
 def delete_user_policies(user_id: str) -> int:
@@ -542,33 +528,7 @@ def delete_specific_policies(user_id: str, policy_names: List[str]) -> int:
     
     return deleted_count
 
-def debug_policy_collection(user_id: str) -> None:
-    """
-    Debug function to print details about policies for a specific user.
-    
-    Args:
-        user_id: ID of the user
-    """
-    try:
-        # Get all policies for this user
-        where_filter = {"user_id": {"$eq": user_id}}
-        results = policy_collection.get(where=where_filter)
-        
-        print(f"\n==== DEBUG: Policy Collection for user {user_id} ====")
-        print(f"Found {len(results['ids'])} policy chunks")
-        
-        # Print each policy's details
-        for i, doc_id in enumerate(results['ids']):
-            print(f"\nPolicy Chunk {i+1}:")
-            print(f"ID: {doc_id}")
-            print(f"Metadata: {results['metadatas'][i]}")
-            print(f"Content: {results['documents'][i][:100]}..." if len(results['documents'][i]) > 100 else f"Content: {results['documents'][i]}")
-        
-        print("\n==== END DEBUG ====\n")
-    except Exception as e:
-        print(f"Error in debug_policy_collection: {str(e)}")
-
-def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results: int = 15) -> List[Dict[str, Any]]:
+def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results: int = 20) -> List[Dict[str, Any]]:
     """
     Get policies relevant to an expense report.
     
@@ -581,8 +541,8 @@ def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results:
         List of relevant policy chunks
     """
     try:
-        # Initialize query with an instructional prompt
-        query = "Find policy rules that specifically address and regulate the following expense items and their compliance requirements: "
+        # Initialize query with an instructional prompt that emphasizes key policy areas
+        query = "Find policy rules that specifically address and regulate the following expense items and their compliance requirements. Pay special attention to policies about MEAL EXPENSES and MAXIMUM REIMBURSEMENT LIMITS: "
         
         # Simple approach: directly convert expense_data dictionary to a string representation
         # Handle top-level fields first
@@ -602,7 +562,7 @@ def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results:
         
         # Process expense items if they exist
         if 'expense_items' in expense_data and expense_data['expense_items']:
-            query += ". Expense items: "
+            query += ". Expense items (pay special attention to meal expenses): "
             
             # Process each expense item
             item_descriptions = []
@@ -636,11 +596,7 @@ def get_relevant_policies(expense_data: Dict[str, Any], user_id: str, n_results:
         if has_usd_items:
             query += ". Some expense items are in USD currency. Find relevant foreign currency policies."
         
-        # Debug the policy collection to see what's available
-        debug_policy_collection(user_id)
-        
-        # Log the constructed query for debugging
-        print(f"Enhanced policy query: {query}")
+        query += "Consider policy items that address value limits and types of expenses covered. IMPORTANT: Specifically identify any policies that restrict meal expenses or set maximum reimbursement limits."
         
         # STEP 3: Use the query to search for relevant policies
         # Make sure we're calling search_policies with the correct parameters

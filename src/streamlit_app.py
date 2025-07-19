@@ -99,9 +99,6 @@ def main():
         else:
             st.sidebar.success("Using API Key from environment variables.")
     
-    # A implementação atual usa apenas o fluxo de trabalho LangGraph com agentes especializados
-    use_agent_team = True  # Sempre usa a implementação baseada em agentes
-    
     # Display user ID (truncated for readability) - useful for debugging
     user_id = st.session_state.user_id
     st.sidebar.text(f"Session ID: {user_id[:8]}...")
@@ -134,7 +131,7 @@ def main():
         if policy_file is not None and upload_policy_button:
             try:
                 # Import the policy loader module
-                from load_policy import load_policy_from_uploaded_file
+                from policy_management import load_policy_from_uploaded_file
                 
                 # Use the file name (without extension) as the policy name
                 policy_name = os.path.splitext(policy_file.name)[0]
@@ -174,7 +171,7 @@ def main():
         if st.button("Atualizar Lista de Políticas", key="refresh_policies"):
             try:
                 # Import the function to get all user policies
-                from load_policy import get_all_user_policies
+                from policy_management import get_all_user_policies
                 
                 # Get all policies for this user
                 policies = get_all_user_policies(st.session_state.user_id)
@@ -214,7 +211,7 @@ def main():
                         if st.button(f"Excluir '{policy_name}'", key=f"delete_{policy_id}"):
                             try:
                                 # Import the function to delete user policies
-                                from load_policy import delete_user_policies
+                                from policy_management import delete_user_policies
                                 
                                 # Delete the policy
                                 deleted = delete_user_policies(st.session_state.user_id, policy_name=policy_name)
@@ -277,10 +274,9 @@ def main():
                 # Create an ExpenseAuditor instance and use the process_and_audit method
                 # This method handles both the document processing and the agentic auditing
                 auditor = ExpenseAuditor(openai_api_key)
-                # Process the file and get the combined results, passing the use_agent_team flag and user_id
+                # Process the file and get the combined results, passing the user_id
                 results = auditor.process_and_audit(
                     uploaded_file, 
-                    use_agent_team=use_agent_team,
                     user_id=st.session_state.user_id
                 )
                 

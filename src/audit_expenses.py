@@ -41,7 +41,7 @@ class ExpenseAuditor:
         if openai_api_key:
             os.environ["OPENAI_API_KEY"] = openai_api_key
     
-    def process_and_audit(self, uploaded_file, use_agent_team=False, user_id=None):
+    def process_and_audit(self, uploaded_file, user_id=None):
         """
         Process an uploaded file and generate an approval email using the agentic auditor.
         
@@ -54,7 +54,6 @@ class ExpenseAuditor:
         
         Args:
             uploaded_file: Streamlit UploadedFile object containing the PDF data
-            use_agent_team: Boolean flag to use the new agent team implementation (default: False)
             user_id: Unique identifier for the user session (for policy management)
             
         Returns:
@@ -69,23 +68,12 @@ class ExpenseAuditor:
                 # Get the path to the temporary file for further processing
                 pdf_path = tmp_file.name
             
-            # Step 2: Import the appropriate auditor based on the use_agent_team flag
-            if use_agent_team:
-                # Use the new agent team implementation
-                from f2_agent_team_audit import run_agentic_auditor
+            # Step 2: Import the appropriate auditor
+            # Use the new agent team implementation
+            from agent_team import run_agentic_auditor
                 
-                # Run the agent team auditor with the PDF path
-                agentic_analysis = run_agentic_auditor(pdf_path, user_id=user_id)
-            else:
-                # Use the original agentic auditor implementation which expects extracted results
-                from f2_agentic_audit import run_agentic_auditor
-                
-                # For the original implementation, we still need to extract information
-                from f1_expenses_info_extract import extract_info_from_uploaded_file
-                extracted_results = extract_info_from_uploaded_file(uploaded_file)
-                
-                # Run the original auditor with the extracted results
-                agentic_analysis = run_agentic_auditor(extracted_results)
+            # Run the agent team auditor with the PDF path
+            agentic_analysis = run_agentic_auditor(pdf_path, user_id=user_id)
             
             # Return the results
             return {
