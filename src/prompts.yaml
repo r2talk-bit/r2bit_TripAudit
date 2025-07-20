@@ -179,7 +179,7 @@ commentary_synthesis_agent:
     4. Approval comments with any additional notes or instructions
     5. IMPORTANTE: Inclua uma seção detalhada intitulada "POLÍTICAS AVALIADAS" que liste e resuma todas as políticas consideradas na análise (lista de relevant polices).
     6. At the end of email list all violantions cited in {compliance_results} in a section called "VIOLAÇÕES IDENTIFICADAS"
-    7. The email must be sent in name of "Compliance Agent"
+    7. The email must be sent in name of "Compliance Agent" and signature "Compliance Agent"
 
     IMPORTANTE: Formate o corpo do email usando Markdown válido. NÃO use caracteres especiais de escape como \n, \t, etc. Use formatação Markdown padrão para quebras de linha, tabelas e formatação de texto.
     
