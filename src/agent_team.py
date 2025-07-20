@@ -1,542 +1,919 @@
 """
 Multi-agent LangGraph workflow for expense report auditing.
 
-This module implements a LangGraph workflow with four specialized agents:
-1. ParsingAgent: Parses raw expense report text into structured JSON format
-2. PolicyRetrievalAgent: Retrieves relevant company expense policies
-3. ComplianceCheckAgent: Checks expenses against company policies
-4. CommentarySynthesisAgent: Synthesizes information into a clear summary and email
+Este módulo implementa um fluxo de trabalho LangGraph com quatro agentes especializados:
+1. ParsingAgent: Analisa o texto bruto do relatório de despesas e o converte em formato JSON estruturado
+2. PolicyRetrievalAgent: Recupera políticas de despesas relevantes da empresa
+3. ComplianceCheckAgent: Verifica as despesas em relação às políticas da empresa
+4. CommentarySynthesisAgent: Sintetiza as informações em um resumo claro e e-mail
 
-The workflow maintains the same interface as f2_agentic_audit.py to ensure
-compatibility with the audit_expenses.py module.
+O fluxo de trabalho mantém a mesma interface que f2_agentic_audit.py para garantir
+compatibilidade com o módulo audit_expenses.py.
 """
 
-import json
-import os
-import re
-import yaml
+#############################################################################
+# IMPORTAÇÕES
+#############################################################################
+
+# === BIBLIOTECAS PADRÃO DO PYTHON ===
+import json  # Usado para converter entre objetos Python e strings JSON
+import os    # Fornece funções para interagir com o sistema operacional (arquivos, pastas)
+import re    # Biblioteca para trabalhar com expressões regulares (padrões de texto)
+import yaml  # Usado para ler arquivos de configuração no formato YAML
+
+# === TIPAGEM PARA CÓDIGO MAIS SEGURO ===
+# Estas importações ajudam a definir tipos específicos para variáveis e funções
+# Isso ajuda a evitar erros e facilita o entendimento do código
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, Callable, TypeVar
-from functools import wraps
+from functools import wraps  # Usado para criar decoradores que preservam metadados da função original
 
-# Using local clean_markdown_text implementation
-
-# Import the policy management functions
+# === MÓDULOS LOCAIS DO PROJETO ===
+# Importa a função que busca políticas relevantes no banco de dados
 from policy_management import get_relevant_policies
-# Import utility functions from graph_utils
-from graph_utils import parse_llm_json_response, parse_json_response, extract_pdf_text
 
-from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-import langgraph
-from langgraph.graph import END, StateGraph
-
+# Funções auxiliares para processar texto, JSON e PDFs
 from graph_utils import parse_llm_json_response, parse_json_response, extract_pdf_text, clean_markdown_text
 
-# Load environment variables from .env file in the project root
+# === CONFIGURAÇÃO DE AMBIENTE ===
+# Carrega variáveis de ambiente do arquivo .env (como chaves de API)
+from dotenv import load_dotenv
+
+# === LANGCHAIN - FRAMEWORK PARA TRABALHAR COM LLMs ===
+# Componentes para criar mensagens para o modelo de linguagem
+from langchain_core.messages import HumanMessage, SystemMessage
+# Cliente para fazer chamadas à API da OpenAI
+from langchain_openai import ChatOpenAI
+
+# === LANGGRAPH - FRAMEWORK PARA CRIAR FLUXOS DE TRABALHO COM AGENTES ===
+import langgraph
+from langgraph.graph import END, StateGraph  # END marca o fim do fluxo de trabalho
+
+#############################################################################
+# CONFIGURAÇÃO INICIAL
+#############################################################################
+
+# Encontra o diretório raiz do projeto para localizar arquivos
 from pathlib import Path
+# __file__ é o caminho para este arquivo atual
+# .parent acessa o diretório que contém este arquivo
+# .parent.absolute() acessa o diretório pai (raiz do projeto) com caminho absoluto
 project_root = Path(__file__).parent.parent.absolute()
+
+# Carrega as variáveis de ambiente do arquivo .env
+# Isso inclui chaves de API e outras configurações sensíveis
 load_dotenv(os.path.join(project_root, '.env'))
 
-# Load prompts from YAML file
+#############################################################################
+# CARREGAMENTO DE PROMPTS
+#############################################################################
+
+# Os prompts são instruções para os modelos de linguagem
+# Eles estão armazenados em um arquivo YAML para facilitar a manutenção
 prompts_path = os.path.join(Path(__file__).parent.absolute(), 'prompts.yaml')
+
+# Abre e lê o arquivo YAML com os prompts
 with open(prompts_path, 'r', encoding='utf-8') as file:
+    # Converte o conteúdo YAML em um dicionário Python
+    # Isso permite acessar os prompts por nome, como prompts['parsing_agent']['system_message']
     prompts = yaml.safe_load(file)
     
 
 def remove_duplicate_policies(policies):
     """
-    Remove duplicate policies based on their ID and chunk index.
+    Remove políticas duplicadas com base no ID e índice de chunk.
+    
+    As políticas podem vir duplicadas da base de conhecimento quando são divididas em chunks.
+    Esta função garante que apenas uma versão de cada política seja usada.
     
     Args:
-        policies: List of policy dictionaries returned from get_relevant_policies
+        policies: Lista de dicionários de políticas retornados por get_relevant_policies
         
     Returns:
-        List of unique policies with duplicates removed
+        Lista de políticas únicas com duplicatas removidas
     """
-    unique_policies = []
-    seen_ids = set()  # Set to track unique policy IDs
+    unique_policies = []  # Lista para armazenar políticas únicas
+    seen_ids = set()      # Conjunto para rastrear IDs de políticas já vistas
     
-    for policy in policies:
-        # Create a unique identifier using policy_id and chunk_index from metadata
+    for policy in policies:  # Para cada política na lista
+        # Cria um identificador único usando policy_id e chunk_index dos metadados
         if 'id' in policy and 'metadata' in policy and 'chunk_index' in policy['metadata']:
+            # Combina o ID da política com o índice do chunk para criar um ID único
             unique_id = f"{policy['id']}_{policy['metadata']['chunk_index']}"
-            if unique_id not in seen_ids:
-                seen_ids.add(unique_id)
-                unique_policies.append(policy)
+            if unique_id not in seen_ids:  # Se este ID único ainda não foi visto
+                seen_ids.add(unique_id)      # Adiciona ao conjunto de IDs vistos
+                unique_policies.append(policy)  # Adiciona a política à lista de políticas únicas
         else:
-            # If the policy doesn't have the expected structure, include it anyway
+            # Se a política não tem a estrutura esperada, inclua-a de qualquer maneira
+            # Isso garante que não perdemos nenhuma política, mesmo que falte metadados
             unique_policies.append(policy)
             
-    return unique_policies
+    return unique_policies  # Retorna a lista de políticas únicas
 
 
-#
-# Define the workflow state structure
-#
-class WorkflowState(TypedDict):
+def format_policies_for_llm(policies):
     """
-    State object for the expense audit workflow.
-    Contains all data passed between workflow nodes.
-    """
-    # Input data
-    pdf_path: str  # Path to the PDF file to process
-    user_id: str  # User ID for policy management
+    Formata as políticas para serem enviadas ao modelo de linguagem.
     
-    # Intermediate data
-    structured_expenses: Dict[str, Any]
-    relevant_policies: List[Dict[str, Any]]  # List of policy objects with policy_id, description, category, applies_to, applicability_reason, priority
-    policy_analysis: Dict[str, Any]  # Analysis of expense data and policy queries including query_summary, expense_categories_identified, total_amount_analysis
-    compliance_results: Dict[str, Any]
-    
-    # Output data
-    email_content: Dict[str, str]
-    error: str
-
-
-# Initialize the OpenAI client
-# client = ChatOpenAI(model="gpt-4o")
-client = ChatOpenAI(model="gpt-3.5-turbo")
-
-# Import OpenAI for direct API access if needed
-import openai
-openai_client = openai.OpenAI()
-
-#
-# LLM Call
-#
-def call_llm(system_message: str, user_message: str, fallback_response: str = None) -> str:
-    try:
-        response = client.invoke([
-            SystemMessage(content=system_message),
-            HumanMessage(content=user_message)
-        ])
-        return response.content
-    except Exception as e:
-        print(f"LLM call failed: {e}")
-        if fallback_response:
-            return fallback_response
-        raise
-
-def handle_agent_errors(agent_name: str):
-    """Decorator to handle common agent errors."""
-    def decorator(func):
-        def wrapper(state: WorkflowState) -> Dict[str, Any]:
-            if state.get("error"):
-                return {}
-            try:
-                return func(state)
-            except Exception as e:
-                return {"error": f"Error in {agent_name}: {str(e)}"}
-        return wrapper
-    return decorator
-
-# Type variable for the decorator
-T = TypeVar('T')
-
-#
-# Define helper functions
-#
-def format_policies(policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Format policies for the compliance check agent.
+    Converte a lista de dicionários de políticas em um texto formatado
+    que é mais fácil para o LLM processar e entender.
     
     Args:
-        policies: List of policy objects from vector database
+        policies (List[Dict]): Lista de dicionários representando políticas
         
     Returns:
-        Formatted list of policies
+        str: Texto formatado com todas as políticas numeradas
     """
+    # Lista para armazenar cada política formatada
     formatted_policies = []
     
-    for policy in policies:
-        # Get the policy description and metadata
-        description = policy.get("content", "")
-        policy_title = policy.get("metadata", {}).get("policy_name", "Expense Policy")
-        category = policy.get("metadata", {}).get("category", "General")
+    # Itera sobre as políticas, numerando-as a partir de 1
+    for i, policy in enumerate(policies, 1):
+        # Cria um texto formatado para cada política
+        formatted_policy = f"Policy {i}:\n"
+        formatted_policy += f"ID: {policy.get('policy_id', 'N/A')}\n"  # ID da política ou N/A se não existir
+        formatted_policy += f"Title: {policy.get('title', 'N/A')}\n"  # Título da política
+        formatted_policy += f"Content: {policy.get('content', 'N/A')}\n"  # Conteúdo da política
+        formatted_policies.append(formatted_policy)
+    
+    # Junta todas as políticas formatadas com duas quebras de linha entre cada uma
+    return "\n\n".join(formatted_policies)
+
+
+#############################################################################
+# DEFINIÇÃO DO ESTADO DO FLUXO DE TRABALHO
+#############################################################################
+
+class WorkflowState(TypedDict):
+    """
+    Define a estrutura de dados para o estado compartilhado entre os agentes no fluxo de trabalho.
+    
+    Esta classe usa TypedDict para garantir que o estado tenha uma estrutura consistente
+    e que os tipos de dados sejam verificados durante o desenvolvimento.
+    
+    Cada campo representa uma parte específica dos dados que fluem pelo workflow.
+    """
+    # Caminho para o arquivo PDF do relatório de despesas a ser auditado
+    pdf_path: str
+    
+    # ID do usuário para rastreamento e limpeza de dados após o processamento
+    # Opcional porque nem sempre é necessário para o processamento básico
+    user_id: Optional[str]
+    
+    # Dados estruturados extraídos do relatório de despesas pelo ParsingAgent
+    # Contém informações como valores, datas, categorias, etc.
+    structured_expenses: Optional[Dict[str, Any]]
+    
+    # Lista de políticas da empresa relevantes para as despesas apresentadas
+    # Recuperadas pelo PolicyRetrievalAgent com base nas despesas estruturadas
+    relevant_policies: Optional[List[Dict[str, Any]]]
+    
+    # Resultados da verificação de conformidade feita pelo ComplianceCheckAgent
+    # Indica quais despesas estão em conformidade com as políticas e quais não estão
+    compliance_results: Optional[Dict[str, Any]]
+    
+    # Conteúdo formatado do e-mail gerado pelo CommentarySynthesisAgent
+    # Contém um resumo da auditoria em formato legível para humanos
+    email_content: Optional[Dict[str, Any]]
+    
+    # Mensagem de erro, se algum dos agentes encontrar um problema
+    # Usado para tratamento de erros e fallback gracioso
+    error: Optional[str]
+
+
+# === INICIALIZAÇÃO DO CLIENTE OPENAI ===
+# Configura o cliente que será usado para fazer chamadas aos modelos de linguagem da OpenAI
+# O modelo gpt-4o é mais avançado e tem melhor desempenho, mas é mais caro e mais lento
+# client = ChatOpenAI(model="gpt-4o")  # Modelo mais avançado (comentado)
+
+# Usamos o modelo gpt-3.5-turbo por padrão por ser mais rápido e econômico
+# Este modelo ainda oferece bom desempenho para as tarefas de análise de despesas
+client = ChatOpenAI(model="gpt-3.5-turbo")  # Modelo mais rápido e econômico
+
+
+def call_llm(system_message: str, user_message: str, fallback_response: str = None):
+    """
+    Faz uma chamada ao modelo de linguagem da OpenAI e retorna a resposta.
+    
+    Esta função encapsula a lógica de chamada à API da OpenAI, incluindo tratamento
+    de erros e formatação das mensagens. Ela usa o cliente OpenAI configurado globalmente.
+    
+    Args:
+        system_message (str): Mensagem de sistema que define o comportamento e contexto do modelo
+                              (instruções sobre como o modelo deve responder)
+        user_message (str): Mensagem/prompt enviado ao modelo (a pergunta ou tarefa)
+        fallback_response (str, optional): Resposta alternativa a ser retornada caso a chamada falhe
         
-        # Extract policy_id from metadata or from the id field
-        policy_id = policy.get("metadata", {}).get("policy_id", None)
-        if not policy_id and "id" in policy:
-            # If policy_id not in metadata, try to extract from the id field
+    Returns:
+        str: Conteúdo da resposta do modelo ou a resposta alternativa em caso de falha
+    """
+    try:
+        # Cria as mensagens para o modelo no formato esperado pela API da OpenAI
+        # SystemMessage define o comportamento geral do modelo
+        # HumanMessage representa a entrada do usuário/prompt específico
+        messages = [
+            SystemMessage(content=system_message),
+            HumanMessage(content=user_message)
+        ]
+        
+        # Faz a chamada ao modelo através do cliente LangChain e extrai o conteúdo da resposta
+        # O método invoke() gerencia a comunicação com a API da OpenAI
+        response = client.invoke(messages).content
+        return response
+    except Exception as e:
+        # Registra o erro no console para fins de depuração
+        print(f"Error calling LLM: {e}")
+        # Retorna a resposta alternativa se fornecida, ou uma string vazia
+        return fallback_response if fallback_response else ""
+
+
+#############################################################################
+# TRATAMENTO DE ERROS PARA AGENTES
+#############################################################################
+
+def handle_agent_errors(agent_name: str):
+    """
+    Decorador para lidar com erros ocorridos durante a execução dos agentes.
+    
+    Este decorador é aplicado a todas as funções de agentes no fluxo de trabalho.
+    Ele captura qualquer exceção que ocorra durante a execução do agente e a
+    transforma em uma mensagem de erro estruturada no estado do fluxo de trabalho.
+    
+    Isso permite que o fluxo de trabalho continue mesmo quando um agente falha,
+    possibilitando que o sistema gere um resumo de e-mail com informações de erro
+    em vez de falhar completamente.
+    
+    Args:
+        agent_name (str): Nome do agente para identificação nas mensagens de erro
+        
+    Returns:
+        Callable: Um decorador que pode ser aplicado a uma função de agente
+    """
+    # Esta função externa recebe o nome do agente e retorna um decorador
+    def decorator(func: Callable[[WorkflowState], Dict[str, Any]]):
+        # Esta função média é o decorador real que recebe a função do agente
+        @wraps(func)  # Preserva os metadados da função original (nome, docstring, etc.)
+        def wrapper(state: WorkflowState) -> Dict[str, Any]:
+            # Se já existe um erro no estado, não tenta executar este agente
+            # Isso evita processamento desnecessário quando o fluxo já falhou
+            if state.get("error"):
+                print(f"Skipping {agent_name} due to previous error: {state['error']}")
+                return {}  # Retorna um dicionário vazio para não alterar o estado
+            
+            # Tenta executar a função do agente
+            try:
+                # Chama a função original do agente e retorna seu resultado
+                return func(state)
+            except Exception as e:
+                # Se ocorrer qualquer erro, captura a exceção
+                error_message = f"Error in {agent_name}: {str(e)}"
+                print(error_message)  # Registra o erro no console para depuração
+                
+                # Retorna um dicionário contendo apenas a mensagem de erro
+                # Este erro será incorporado ao estado do fluxo de trabalho
+                return {"error": error_message}
+                
+        return wrapper  # Retorna a função wrapper que substitui a função original
+    return decorator  # Retorna o decorador configurado com o nome do agente
+
+# Variável de tipo para o decorador
+T = TypeVar('T')  # Usado para tipagem genérica em decoradores
+
+# === FUNÇÕES AUXILIARES ===
+# Estas funções ajudam a processar e formatar os dados das políticas
+
+def format_policies(policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Formata as políticas para o agente de verificação de conformidade.
+    
+    Esta função padroniza o formato das políticas recuperadas da base de conhecimento,
+    garantindo que todas tenham os mesmos campos e estrutura, independentemente
+    de como foram armazenadas originalmente.
+    
+    Args:
+        policies: Lista de objetos de política da base de dados vetorial
+        
+    Returns:
+        Lista formatada de políticas
+    """
+    formatted_policies = []  # Lista para armazenar as políticas formatadas
+    
+    for policy in policies:  # Para cada política na lista
+        # Obtém a descrição da política e metadados
+        description = policy.get("content", "")  # Conteúdo da política (texto)
+        policy_title = policy.get("metadata", {}).get("policy_name", "Expense Policy")  # Título da política
+        category = policy.get("metadata", {}).get("category", "General")  # Categoria da política
+        
+        # Extrai o policy_id dos metadados ou do campo id
+        policy_id = policy.get("metadata", {}).get("policy_id", None)  # Tenta obter dos metadados
+        if not policy_id and "id" in policy:  # Se não encontrou nos metadados
+            # Tenta extrair do campo id
             id_parts = policy.get("id", "")
-            policy_id = id_parts  # Use the full ID
+            policy_id = id_parts  # Usa o ID completo
         
+        # Cria um dicionário formatado com todos os campos necessários
         formatted_policies.append({
-            "policy_id": policy_id or f"policy-{len(formatted_policies)}",
-            "policy_title": policy_title,
-            "description": description,
-            "content": description,  # Include full content for compliance checking
-            "category": category,
-            "applicability_reason": "Relevant to expense items in report",
-            "priority": "medium"
+            "policy_id": policy_id or f"policy-{len(formatted_policies)}",  # ID único ou gerado
+            "policy_title": policy_title,  # Título da política
+            "description": description,  # Descrição resumida
+            "content": description,  # Conteúdo completo para verificação
+            "category": category,  # Categoria (ex: "meals", "travel")
+            "applicability_reason": "Relevant to expense items in report",  # Razão da aplicabilidade
+            "priority": "medium"  # Prioridade padrão
         })
     
-    return formatted_policies
+    return formatted_policies  # Retorna a lista de políticas formatadas
 
 def get_policy_type(policy: Dict[str, Any]) -> str:
     """
-    Determine the type of policy based on its content and metadata.
+    Determina o tipo de política com base em seu conteúdo e metadados.
+    
+    Esta função analisa o texto da política para identificar se ela se refere a
+    regras específicas como limites de valor ou restrições de refeições.
     
     Args:
-        policy: A policy dictionary
+        policy: Um dicionário de política
         
     Returns:
-        Policy type identifier (e.g., 'meals', 'max_amount')
+        Identificador do tipo de política (ex: 'meals', 'max_amount')
     """
-    description = policy.get("description", "").lower()
-    title = policy.get("policy_title", "").lower()
-    policy_id = policy.get("policy_id", "").lower()
+    # Converte todos os textos para minúsculas para facilitar a busca
+    description = policy.get("description", "").lower()  # Descrição em minúsculas
+    title = policy.get("policy_title", "").lower()  # Título em minúsculas
+    policy_id = policy.get("policy_id", "").lower()  # ID em minúsculas
     
+    # Verifica se é uma política relacionada a refeições
     if "meal" in description or "food" in description or "meal" in title or "meal" in policy_id:
-        return "meals"
+        return "meals"  # Política de refeições
+    # Verifica se é uma política relacionada a limites de valor
     elif "maximum" in description or "limit" in description or "5000" in description or "max" in policy_id:
-        return "max_amount"
+        return "max_amount"  # Política de valor máximo
     else:
-        return "other"
-
-
-# Define the agent functions
+        return "other"  # Outros tipos de política
+#############################################################################
+# AGENTES ESPECIALIZADOS DO FLUXO DE TRABALHO
+#############################################################################
 
 @handle_agent_errors("parsing_agent")
 def parsing_agent(state: WorkflowState) -> Dict[str, Any]:
-    """Parse PDF expense report into structured JSON."""
-    # Extract PDF text
+    """
+    Analisa o relatório de despesas em PDF e converte em dados JSON estruturados.
+    
+    Este é o primeiro agente no fluxo de trabalho e funciona como um extrator de informações.
+    Ele recebe o caminho para o arquivo PDF do relatório de despesas, extrai o texto
+    usando OCR (Reconhecimento Ótico de Caracteres) e processamento de imagem, e então
+    usa um modelo de linguagem (LLM) para converter esse texto bruto em um formato JSON
+    estruturado e padronizado.
+    
+    O processo envolve:
+    1. Extração de texto do PDF usando a função extract_pdf_text
+    2. Envio do texto extraído para o LLM com instruções específicas
+    3. Processamento da resposta do LLM para garantir que esteja no formato JSON esperado
+    
+    Args:
+        state (WorkflowState): Estado atual do fluxo de trabalho contendo o caminho do PDF
+                              no campo 'pdf_path'
+        
+    Returns:
+        Dict[str, Any]: Dicionário contendo a chave 'structured_expenses' com os dados
+                       estruturados extraídos do relatório de despesas
+    """
+    # Extrai o texto do PDF usando OCR e processamento de imagem
+    # A função extract_pdf_text usa bibliotecas como img2table e Tesseract OCR
+    # para converter o PDF em texto legível por máquina
+    # Nota: Por padrão, usa o idioma inglês ('eng') para o OCR
     pdf_text = extract_pdf_text(state["pdf_path"])
     
-    # Call LLM with unified function
-    response = call_llm(
-        prompts['parsing_agent']['system_message'],
-        prompts['parsing_agent']['prompt'].format(pdf_text=pdf_text)
-    )
+    # Prepara o prompt para o modelo de linguagem
+    # O system_message define o comportamento geral do modelo
+    # O user_message contém o texto extraído do PDF e instruções específicas
+    system_message = prompts['parsing_agent']['system_message']
+    user_message = prompts['parsing_agent']['prompt'].format(pdf_text=pdf_text)
     
-    # Parse with unified parser
-    structured_expenses = parse_llm_json_response(response, {
-        "trip_purpose": "Unknown",
-        "total_amount": 0,
-        "currency": "BRL",
-        "expense_items": []
-    })
+    # Chama o modelo de linguagem para analisar o texto e estruturá-lo
+    # O modelo recebe o texto bruto e retorna uma versão estruturada em formato JSON
+    response = call_llm(system_message, user_message)
     
-    # Debug output
-    from graph_utils import generate_expense_report
-    report = generate_expense_report(structured_expenses)
-    print(report)
+    # Define o esquema esperado para o JSON de resposta
+    # Isso garante que o JSON retornado pelo modelo tenha a estrutura correta
+    # e que todos os campos necessários estejam presentes
+    expected_schema = {
+        "expense_report": {
+            "report_id": str,  # Identificador único do relatório
+            "employee": {
+                "name": str,  # Nome do funcionário
+                "id": str    # ID do funcionário
+            },
+            "total_amount": float,  # Valor total das despesas
+            "currency": str,       # Moeda (ex: BRL, USD)
+            "submission_date": str,  # Data de envio do relatório
+            "expenses": [{  # Lista de despesas individuais
+                "description": str,  # Descrição da despesa
+                "amount": float,     # Valor da despesa
+                "date": str,         # Data da despesa
+                "category": str,      # Categoria (ex: transporte, hospedagem)
+                "receipt_id": str    # ID do recibo/comprovante
+            }]
+        }
+    }
     
+    # Analisa a resposta do modelo e extrai o JSON estruturado
+    # A função parse_llm_json_response garante que o JSON esteja no formato correto
+    # e lida com possíveis erros de formatação na resposta do modelo
+    structured_expenses = parse_llm_json_response(response, expected_schema)
+    
+    # Retorna as despesas estruturadas para o próximo agente no fluxo de trabalho
+    # Este resultado será usado pelo policy_retrieval_agent para buscar políticas relevantes
     return {"structured_expenses": structured_expenses}
 
 
 @handle_agent_errors("policy_retrieval_agent")
 def policy_retrieval_agent(state: WorkflowState) -> Dict[str, Any]:
-    """Retrieve relevant expense policies based on structured data."""
+    """
+    Recupera políticas de despesas relevantes com base nos dados estruturados.
     
-
-    # Extract data from state
+    Este é o segundo agente no fluxo de trabalho e funciona como um pesquisador de políticas.
+    Ele recebe os dados estruturados do relatório de despesas do ParsingAgent,
+    analisa esses dados para identificar quais tipos de políticas são relevantes,
+    e então busca essas políticas na base de conhecimento da empresa.
+    
+    O processo envolve:
+    1. Usar o LLM para analisar as despesas e gerar consultas de pesquisa relevantes
+    2. Executar essas consultas na base de conhecimento para recuperar políticas
+    3. Remover duplicatas e formatar as políticas para o próximo agente
+    
+    Args:
+        state (WorkflowState): Estado atual do fluxo de trabalho contendo as despesas estruturadas
+                              no campo 'structured_expenses'
+        
+    Returns:
+        Dict[str, Any]: Dicionário contendo a chave 'relevant_policies' com as políticas
+                       relevantes para as despesas apresentadas
+    """
+    # Extrai os dados do estado do fluxo de trabalho
+    # structured_expenses contém os dados JSON das despesas já estruturados pelo ParsingAgent
     structured_expenses = state["structured_expenses"]
+    # user_id é usado para rastrear políticas específicas do usuário (se existirem)
+    # Se não for fornecido, usa "default_user" como padrão
     user_id = state.get("user_id", "default_user")
     
-    # Use LLM to analyze expenses and generate queries
+    # Prepara o prompt para o modelo de linguagem (LLM)
+    # O system_message define o comportamento geral do modelo
     system_message = prompts["policy_retrieval_agent"]["system_message"]
     
-    # Convert the structured_expenses dictionary to a formatted JSON string
+    # Converte o dicionário de despesas estruturadas em uma string JSON formatada
+    # O parâmetro indent=4 adiciona recuos para tornar o JSON mais legível
     import json
     structured_expenses_str = json.dumps(structured_expenses, indent=4)
     
-    # Format the prompt with the JSON string
+    # Formata o prompt inserindo a string JSON no template
+    # O template contém um marcador {structured_expenses} que será substituído
     user_message = prompts["policy_retrieval_agent"]["prompt"].format(structured_expenses=structured_expenses_str)
     
-    # Call LLM to analyze expenses and generate queries
+    # Chama o modelo de linguagem para analisar as despesas e gerar consultas de pesquisa
+    # O LLM analisará as despesas e sugerirá quais tipos de políticas devem ser buscadas
     llm_response = call_llm(system_message, user_message)
     
+    # Lista para armazenar as consultas de pesquisa geradas pelo LLM
     search_queries = []
 
-    # Process the plain text response from LLM
-    if llm_response and llm_response.strip():
-        # Split the response into lines and clean them
+    # Processa a resposta de texto do LLM para extrair as consultas
+    if llm_response and llm_response.strip():  # Verifica se a resposta não está vazia
+        # Divide a resposta em linhas e remove espaços em branco extras
         lines = [line.strip() for line in llm_response.split('\n') if line.strip()]
         
-        # Extract lines that look like queries (typically containing a question or keywords)
-    
+        # Extrai linhas que parecem consultas (geralmente contendo perguntas ou palavras-chave)
         for line in lines:
-            # Remove bullet points, numbers, and other common prefixes
+            # Remove marcadores de lista, números e outros prefixos comuns usando expressão regular
+            # ^ indica o início da linha, e os caracteres dentro dos colchetes são os que serão removidos
             clean_line = re.sub(r'^[-*•●■□▪▫◆◇◈⬤⚫⚪⦿⊙⊚⊛⊜⊝⊗⊘⊙⊚⊛⊜⊝0-9.\s"]*', '', line).strip()
+            # Remove aspas duplas e simples do início e fim da linha
             clean_line = clean_line.strip('"').strip("'").strip()
             
-            # Skip empty lines or lines that are too short
+            # Pula linhas vazias ou muito curtas (menos de 5 caracteres)
+            # Isso evita consultas inúteis como "a", "de", etc.
             if clean_line and len(clean_line) > 5:
                 search_queries.append(clean_line)
     
-    # If no queries were extracted, use defaults
+    # Se nenhuma consulta foi extraída, usa uma consulta padrão
+    # Isso garante que pelo menos algumas políticas serão recuperadas
     if not search_queries:
         search_queries.append("list the refund rules")
     
-    # Remove duplicates while preserving order
+    # Remove consultas duplicadas enquanto preserva a ordem original
+    # O conjunto 'seen' rastreia consultas já vistas
     seen = set()
+    # Esta é uma list comprehension que mantém apenas a primeira ocorrência de cada consulta
+    # A expressão 'not (q in seen or seen.add(q))' é um truque para adicionar ao conjunto e verificar ao mesmo tempo
     search_queries = [q for q in search_queries if not (q in seen or seen.add(q))]
     
-    # Get and combine policies for all queries
+    # Busca e combina políticas para todas as consultas
     all_policies = []
     for query in search_queries:
+        # get_relevant_policies é uma função importada de policy_management.py
+        # que busca políticas relevantes na base de conhecimento
         policies = get_relevant_policies(query, user_id)
+        # Adiciona as políticas encontradas à lista completa
         all_policies.extend(policies)
     
-    # Remove duplicate policies
+    # Remove políticas duplicadas usando a função definida anteriormente
     all_policies = remove_duplicate_policies(all_policies)
         
-    # Format policies for compliance checking
+    # Formata as políticas para verificação de conformidade
+    # Isso padroniza o formato das políticas para o próximo agente
     formatted_policies = format_policies(all_policies)
     
-    # Generate a readable report of the policies
+    # Gera um relatório legível das políticas para depuração
+    # Importa a função apenas quando necessário para evitar importações circulares
     from graph_utils import generate_formatted_policies_report
     policy_report = generate_formatted_policies_report(formatted_policies)
+    # Imprime o relatório formatado com separadores para facilitar a leitura
     print("\n" + "=" * 80)
     print("FORMATTED POLICY REPORT:")
     print("=" * 80)
     print(policy_report)
     print("=" * 80)
     
-    # Generate and print a human-readable report of the policies
+    # Gera e imprime um relatório legível para humanos das políticas
     from graph_utils import generate_policies_report
+    # Cria um dicionário com a chave 'relevant_policies' contendo as políticas formatadas
     policy_data = {
         "relevant_policies": formatted_policies
     }
+    # Gera um relatório em texto formatado para humanos
     report = generate_policies_report(policy_data)
     print("*" * 80)
     print(report)
     print("*" * 80)
 
+    # Retorna os dados de política para o próximo agente no fluxo de trabalho
+    # Este resultado será usado pelo compliance_check_agent para verificar conformidade
     return policy_data
     
 @handle_agent_errors("compliance_check_agent")
 def compliance_check_agent(state: WorkflowState) -> Dict[str, Any]:
-    """Checks expenses against company policies to determine compliance."""
+    """
+    Verifica as despesas em relação às políticas da empresa para determinar conformidade.
     
+    Este é o terceiro agente no fluxo de trabalho e funciona como um auditor de conformidade.
+    Ele recebe os dados estruturados do relatório de despesas e as políticas relevantes,
+    compara cada despesa com as políticas aplicáveis e determina se estão em conformidade.
+    
+    O processo envolve:
+    1. Analisar as despesas estruturadas e as políticas relevantes
+    2. Usar o LLM para verificar a conformidade de cada despesa com as políticas
+    3. Gerar um relatório detalhado de conformidade com violações identificadas
+    
+    Args:
+        state (WorkflowState): Estado atual do fluxo de trabalho contendo as despesas estruturadas
+                              e as políticas relevantes
+        
+    Returns:
+        Dict[str, Any]: Dicionário contendo a chave 'compliance_results' com os resultados
+                       da verificação de conformidade
+    """
+    
+    # Mensagem de log para indicar o início do agente de verificação de conformidade
     print("STARTING COMPLIANCE CHECK AGENT")
-    # Extract data from state
-    structured_expenses = state["structured_expenses"]
-    relevant_policies = state["relevant_policies"]
-    policy_analysis = state.get("policy_analysis", {})
     
-    # Sort policies by priority
+    # Extrai os dados necessários do estado do fluxo de trabalho
+    # structured_expenses: dados estruturados das despesas do relatório
+    structured_expenses = state["structured_expenses"]
+    # relevant_policies: políticas relevantes recuperadas pelo agente anterior
+    relevant_policies = state["relevant_policies"]
+    # policy_analysis: análise adicional das políticas (se disponível)
+    policy_analysis = state.get("policy_analysis", {})  # Usa um dicionário vazio como padrão se não existir
+    
+    # Ordena as políticas por prioridade para garantir que políticas mais importantes
+    # sejam consideradas primeiro na verificação de conformidade
+    # A expressão lambda retorna 0 para prioridade alta (colocando-as primeiro) e 1 para as demais
     sorted_policies = sorted(relevant_policies, key=lambda p: 0 if p.get("priority") == "high" else 1)
     
+    # Imprime as políticas relevantes ordenadas por prioridade para fins de depuração
     print(f"RELEVANT POLICIES (sorted by priority):")
     for i, policy in enumerate(sorted_policies):
+        # Mostra o índice (começando em 1), prioridade, ID e categoria de cada política
         print(f"{i+1}. [{policy.get('priority', 'medium')}] {policy.get('policy_id')}: {policy.get('category')}")
     
-    # Create policy context
+    # Cria um contexto estruturado das políticas para enviar ao modelo de linguagem
+    # Isso facilita a análise pelo LLM ao fornecer dados em um formato consistente
     policy_context = {
-        "policies": sorted_policies,
-        "analysis": {
+        "policies": sorted_policies,  # Lista de políticas ordenadas por prioridade
+        "analysis": {  # Informações adicionais de análise (se disponíveis)
+            # Categorias de despesas identificadas anteriormente
             "expense_categories": policy_analysis.get("expense_categories_identified", []),
+            # Resumo das consultas usadas para recuperar as políticas
             "query_summary": policy_analysis.get("query_summary", ""),
+            # Análise específica do valor total (se disponível)
             "total_amount_analysis": policy_analysis.get("total_amount_analysis", {})
         }
     }
     
-    # Call LLM for compliance check
+    # Prepara o prompt para o modelo de linguagem formatando-o com os dados das despesas
+    # e políticas convertidos para JSON formatado (com recuo para melhor legibilidade)
     prompt = prompts['compliance_check_agent']['prompt'].format(
         structured_expenses=json.dumps(structured_expenses, indent=2),
         relevant_policies=json.dumps(policy_context, indent=2)
     )
     
-    # Define fallback response for LLM failures
+    # Define uma resposta alternativa para casos em que a chamada ao LLM falhe
+    # Esta é uma string JSON que indica não-conformidade com uma mensagem de erro
     fallback_content = '{"compliant": false, "violations": [{"policy": "Error", "description": "Failed to evaluate compliance due to an error."}]}'
     
+    # Chama o modelo de linguagem para verificar a conformidade
+    # Passa o prompt formatado e a resposta alternativa em caso de falha
     content = call_llm(
-        prompts['compliance_check_agent']['system_message'], 
-        prompt, 
-        fallback_content
+        prompts['compliance_check_agent']['system_message'],  # Instruções gerais para o modelo
+        prompt,  # Prompt específico com os dados das despesas e políticas
+        fallback_content  # Resposta alternativa em caso de falha
     )
     
-    # Parse results with fallback
+    # Define uma estrutura de fallback mais completa para o caso de falha na análise da resposta
+    # Isso garante que mesmo em caso de erro, teremos uma resposta estruturada
     fallback = {
-        "compliant": False,
+        "compliant": False,  # Por padrão, considera não conforme em caso de erro
         "violations": [{"policy": "Parsing Error", "description": "Failed to parse LLM response."}],
         "comments": ["An error occurred during compliance analysis. Please review manually."]
     }
     
+    # Informa que está usando o parser robusto para analisar os resultados
     print("Using robust JSON parser for compliance check results")
+    # Analisa a resposta do LLM e converte para um dicionário Python
+    # Se a análise falhar, usa a estrutura de fallback definida acima
     compliance_results = parse_llm_json_response(content, fallback)
     
-    # Ensure required fields exist
+    # Garante que todos os campos necessários existam no resultado
+    # Isso evita erros ao acessar campos que podem estar ausentes
     if "is_compliant" not in compliance_results:
+        # Se o campo de conformidade não existir, considera não conforme por padrão
         compliance_results["is_compliant"] = False
     if "total_amount" not in compliance_results:
+        # Se o valor total não estiver no resultado, usa o valor das despesas estruturadas
         compliance_results["total_amount"] = structured_expenses.get("total_amount", 0)
     if "currency" not in compliance_results:
+        # Se a moeda não estiver no resultado, usa BRL (Real Brasileiro) como padrão
         compliance_results["currency"] = structured_expenses.get("currency", "BRL")
     if "violations" not in compliance_results:
+        # Se não houver lista de violações, cria uma lista vazia
         compliance_results["violations"] = []
     if "compliant_items" not in compliance_results:
+        # Se não houver lista de itens conformes, cria uma lista vazia
         compliance_results["compliant_items"] = []
     if "non_compliant_items" not in compliance_results:
+        # Se não houver lista de itens não conformes, cria uma lista vazia
         compliance_results["non_compliant_items"] = []
     
-
+    # Imprime os resultados da verificação de conformidade para depuração
+    # Os separadores (*) tornam a saída mais visível no console
     print("*" *50)
     print("CHECK COMPLIANCE RESULT")
+    # Imprime o resultado como JSON formatado, garantindo que caracteres especiais sejam preservados
     print(json.dumps(compliance_results, indent=4, ensure_ascii=False))
     print("*" *50)
     
-
+    # Retorna os resultados da verificação de conformidade para o próximo agente
+    # Este resultado será usado pelo commentary_synthesis_agent para gerar o e-mail final
     return {"compliance_results": compliance_results}
 
 @handle_agent_errors("cleanup_agent")
 def cleanup_agent(state: WorkflowState) -> Dict[str, Any]:
-    """Cleans up user-specific data from the vector database after workflow completion."""
-    # Get the user ID from the state
-    user_id = state.get("user_id")
+    """
+    Limpa os dados específicos do usuário da base de dados vetorial após a conclusão do fluxo de trabalho.
     
+    Este é um agente auxiliar que garante que os dados temporários do usuário sejam removidos
+    da base de conhecimento após o processamento do relatório de despesas. Isso é importante
+    para manter a base de dados limpa e evitar acúmulo de dados desnecessários.
+    
+    O processo envolve:
+    1. Verificar se existe um ID de usuário no estado do fluxo de trabalho
+    2. Chamar a função de exclusão de políticas para remover dados específicos do usuário
+    3. Retornar o status da operação de limpeza
+    
+    Args:
+        state (WorkflowState): Estado atual do fluxo de trabalho contendo o ID do usuário
+                              no campo 'user_id' (se disponível)
+        
+    Returns:
+        Dict[str, Any]: Dicionário contendo o status da operação de limpeza ou mensagem de erro
+    """
+    # Obtém o ID do usuário do estado do fluxo de trabalho
+    # O ID do usuário é usado para identificar quais políticas devem ser removidas
+    user_id = state.get("user_id")  # Usa get() para evitar erro se a chave não existir
+    
+    # Verifica se o ID do usuário existe
+    # Se não existir, não há nada para limpar, então pula esta etapa
     if not user_id:
         print("No user ID found in state, skipping cleanup")
-        return {}
+        return {}  # Retorna um dicionário vazio, mantendo o estado inalterado
     
-    # Import the policy loader module
+    # Importa a função de exclusão de políticas do módulo policy_management
+    # A importação é feita aqui para evitar dependências circulares
     from policy_management import delete_user_policies
     
-    # Delete all policies for this user
+    # Tenta excluir todas as políticas associadas a este usuário
+    # Usa um bloco try-except para capturar e tratar possíveis erros
     try:
+        # Chama a função que exclui as políticas e retorna o número de itens excluídos
         deleted_count = delete_user_policies(user_id)
+        
+        # Registra o resultado da operação de limpeza no console
         print(f"Cleanup complete: Deleted {deleted_count} policies for user {user_id}")
+        
+        # Retorna um status de sucesso com informações sobre a operação
         return {"cleanup_status": f"Successfully deleted {deleted_count} policies for user {user_id}"}
     except Exception as e:
+        # Se ocorrer algum erro durante a limpeza, captura e registra a exceção
         error_msg = f"Error during policy cleanup: {str(e)}"
-        print(error_msg)
+        print(error_msg)  # Imprime a mensagem de erro no console
+        
+        # Retorna um dicionário contendo a mensagem de erro
+        # Isso será incorporado ao estado do fluxo de trabalho
         return {"error": error_msg}
 
 @handle_agent_errors("commentary_synthesis_agent")
 def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
-    """Generates a final human-readable summary of the expense audit results."""
-    # Special case: if there's an error, generate a fallback email
+    """
+    Gera um resumo final legível para humanos dos resultados da auditoria de despesas.
+    
+    Este é o quarto e último agente no fluxo de trabalho e funciona como um sintetizador de informações.
+    Ele recebe todos os dados processados pelos agentes anteriores (estruturação, políticas e conformidade)
+    e gera um e-mail formatado com um resumo claro e conciso da auditoria, incluindo recomendações
+    sobre aprovação ou rejeição das despesas.
+    
+    O processo envolve:
+    1. Consolidar os dados de todos os agentes anteriores
+    2. Simplificar os dados para facilitar o processamento pelo LLM
+    3. Gerar um e-mail bem formatado com resumo, status de aprovação e comentários
+    
+    Args:
+        state (WorkflowState): Estado atual do fluxo de trabalho contendo todos os dados processados
+                              pelos agentes anteriores
+        
+    Returns:
+        Dict[str, Any]: Dicionário contendo a chave 'email_content' com o conteúdo formatado do e-mail
+    """
+    # Caso especial: se houver um erro em qualquer etapa anterior, gera um e-mail de fallback
+    # Isso garante que o fluxo de trabalho sempre produza uma saída, mesmo em caso de falha
     if state.get("error"):
+        # Cria um conteúdo de e-mail básico informando sobre o erro
         email_content = {
-            "subject": "Error Processing Expense Report",
-            "body": f"There was an error processing the expense report: {state['error']}",
-            "recipient": "Finance Department",
-            "approval_status": "Needs Review",
-            "approval_comments": "An error occurred during processing. Please review manually."
+            "subject": "Error Processing Expense Report",  # Assunto indicando erro
+            "body": f"There was an error processing the expense report: {state['error']}",  # Corpo com detalhes do erro
+            "recipient": "Finance Department",  # Destinatário (departamento financeiro)
+            "approval_status": "Needs Review",  # Status indicando necessidade de revisão manual
+            "approval_comments": "An error occurred during processing. Please review manually."  # Comentários adicionais
         }
+        # Retorna o conteúdo do e-mail de erro
         return {"email_content": email_content}
     
+    # Se não houver erro, tenta gerar um e-mail completo com base nos dados processados
     try:
-        # Extract data from state
-        structured_expenses = state["structured_expenses"]
-        relevant_policies = state["relevant_policies"]
-        policy_analysis = state.get("policy_analysis", {})
-        compliance_results = state["compliance_results"]
+        # Extrai todos os dados necessários do estado do fluxo de trabalho
+        # Estes dados foram produzidos pelos agentes anteriores
+        structured_expenses = state["structured_expenses"]  # Dados estruturados do ParsingAgent
+        relevant_policies = state["relevant_policies"]  # Políticas relevantes do PolicyRetrievalAgent
+        policy_analysis = state.get("policy_analysis", {})  # Análise adicional de políticas (se disponível)
+        compliance_results = state["compliance_results"]  # Resultados de conformidade do ComplianceCheckAgent
         
-        # Check if we have the necessary data to generate an email
+        # Verifica se temos todos os dados necessários para gerar o e-mail
+        # Se algum dado essencial estiver faltando, levanta uma exceção
         if not structured_expenses or not relevant_policies or not compliance_results:
             raise ValueError("Missing required data for email generation")
         
-        # Sort policies by priority
+        # Ordena as políticas por prioridade (alta prioridade primeiro)
+        # Isso ajuda a destacar as políticas mais importantes no e-mail
         sorted_policies = sorted(relevant_policies, key=lambda p: 0 if p.get("priority") == "high" else 1)
         
-        # Create enhanced context with safe defaults
+        # Cria um contexto aprimorado com valores padrão seguros
+        # Este contexto será usado pelo LLM para gerar o e-mail
         enhanced_context = {
-            "policies": sorted_policies,
+            "policies": sorted_policies,  # Políticas ordenadas por prioridade
             "analysis": {
+                # Categorias de despesas identificadas (ou lista vazia se não houver)
                 "expense_categories": policy_analysis.get("expense_categories_identified", [])
             }
         }
         
-        # Create a simplified version of the data for the LLM to reduce complexity
+        # Cria uma versão simplificada dos dados para o LLM para reduzir a complexidade
+        # Isso ajuda a evitar tokens desnecessários e facilita o processamento pelo modelo
         simplified_expenses = {
-            "trip_purpose": structured_expenses.get("trip_purpose", "Unknown"),
-            "total_amount": structured_expenses.get("total_amount", 0),
-            "currency": structured_expenses.get("currency", "BRL"),
-            "expense_items": []
+            "trip_purpose": structured_expenses.get("trip_purpose", "Unknown"),  # Propósito da viagem
+            "total_amount": structured_expenses.get("total_amount", 0),  # Valor total das despesas
+            "currency": structured_expenses.get("currency", "BRL"),  # Moeda (Real Brasileiro por padrão)
+            "expense_items": []  # Lista vazia para itens de despesa (será preenchida abaixo)
         }
         
-        # Add only essential expense item data
+        # Adiciona apenas dados essenciais de itens de despesa
+        # Isso reduz o tamanho do prompt e mantém apenas informações relevantes
         if "expense_items" in structured_expenses and isinstance(structured_expenses["expense_items"], list):
             for item in structured_expenses["expense_items"]:
+                # Verifica se o item é um dicionário válido
                 if isinstance(item, dict):
+                    # Cria um item simplificado com apenas os campos essenciais
                     simplified_item = {
-                        "description": item.get("description", "Unknown"),
-                        "amount": item.get("amount", 0),
-                        "category": item.get("category", "Unknown")
+                        "description": item.get("description", "Unknown"),  # Descrição da despesa
+                        "amount": item.get("amount", 0),  # Valor da despesa
+                        "category": item.get("category", "Unknown")  # Categoria da despesa
                     }
+                    # Adiciona o item simplificado à lista
                     simplified_expenses["expense_items"].append(simplified_item)
         
-        # Simplify compliance results
+        # Simplifica os resultados de conformidade para o LLM
+        # Novamente, mantém apenas os campos mais importantes
         simplified_compliance = {
-            "compliant": compliance_results.get("compliant", False),
-            "approval_recommendation": compliance_results.get("approval_recommendation", "Needs Review"),
-            "violations": compliance_results.get("violations", [])
+            "compliant": compliance_results.get("compliant", False),  # Status geral de conformidade
+            "approval_recommendation": compliance_results.get("approval_recommendation", "Needs Review"),  # Recomendação
+            "violations": compliance_results.get("violations", [])  # Lista de violações encontradas
         }
         
-        # Call LLM for synthesis with simplified data
+        # Prepara o prompt para o LLM com os dados simplificados
+        # Formata o prompt inserindo os dados JSON no template
         prompt = prompts['commentary_synthesis_agent']['prompt'].format(
-            structured_expenses=json.dumps(simplified_expenses, indent=2),
-            relevant_policies=json.dumps(enhanced_context, indent=2),
-            compliance_results=json.dumps(simplified_compliance, indent=2)
+            structured_expenses=json.dumps(simplified_expenses, indent=2),  # Despesas em formato JSON
+            relevant_policies=json.dumps(enhanced_context, indent=2),  # Políticas em formato JSON
+            compliance_results=json.dumps(simplified_compliance, indent=2)  # Resultados em formato JSON
         )
         
-        # Define a well-structured fallback for the LLM call
+        # Define um fallback bem estruturado para a chamada do LLM
+        # Isso será usado se a chamada ao LLM falhar completamente
         email_fallback = json.dumps({
-            "subject": "Análise de Despesas de Viagem",
-            "body": "Relatório de análise de despesas de viagem.",
-            "recipient": "Finance Department",
-            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),
-            "approval_comments": "Please review the expense report.",
-            "evaluated_policies": "Relevant policies were considered in this analysis."
+            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
+            "body": "Relatório de análise de despesas de viagem.",  # Corpo básico
+            "recipient": "Finance Department",  # Destinatário padrão
+            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),  # Status baseado nos resultados
+            "approval_comments": "Please review the expense report.",  # Comentário genérico
+            "evaluated_policies": "Relevant policies were considered in this analysis."  # Menção às políticas
         })
         
-        # Call LLM with fallback
+        # Chama o LLM para sintetizar o e-mail com os dados simplificados
+        # Passa o prompt formatado e o fallback em caso de erro
         content = call_llm(
-            prompts['commentary_synthesis_agent']['system_message'],
-            prompt,
-            email_fallback
+            prompts['commentary_synthesis_agent']['system_message'],  # Instruções gerais para o modelo
+            prompt,  # Prompt específico com os dados simplificados
+            email_fallback  # Resposta alternativa em caso de falha
         )
         
-        # Define parsing fallback
+        # Define um fallback mais detalhado para análise da resposta
+        # Este será usado se o parsing da resposta do LLM falhar
         fallback = {
-            "subject": "Análise de Despesas de Viagem",
+            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
+            # Corpo com informações básicas sobre o valor total
             "body": f"Análise de despesas no valor total de {structured_expenses.get('total_amount', 0)} {structured_expenses.get('currency', 'BRL')}.",
-            "recipient": "Finance Department",
-            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),
-            "approval_comments": "Please review the expense report manually.",
-            "evaluated_policies": "Relevant policies were considered in this analysis."
+            "recipient": "Finance Department",  # Destinatário padrão
+            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),  # Status baseado nos resultados
+            "approval_comments": "Please review the expense report manually.",  # Solicitação de revisão manual
+            "evaluated_policies": "Relevant policies were considered in this analysis."  # Menção às políticas
         }
         
-        # Parse email content with better fallback
+        # Analisa o conteúdo do e-mail da resposta do LLM
+        # Se a análise falhar, usa o fallback definido acima
         email_content = parse_llm_json_response(content, fallback)
         
-        # Clean up markdown text
+        # Limpa o texto markdown para garantir formatação adequada
+        # Isso remove marcações markdown que podem não ser adequadas para e-mail
         if 'body' in email_content and email_content['body']:
             email_content['body'] = clean_markdown_text(email_content['body'])
         
+        # Limpa também o texto das políticas avaliadas
         if 'evaluated_policies' in email_content and email_content['evaluated_policies']:
             email_content['evaluated_policies'] = clean_markdown_text(email_content['evaluated_policies'])
-            
+        
+        # Limpa o texto dos comentários de aprovação
         if 'approval_comments' in email_content and email_content['approval_comments']:
             email_content['approval_comments'] = clean_markdown_text(email_content['approval_comments'])
         
-        # Ensure critical fields are present
+        # Garante que campos críticos estejam presentes no conteúdo do e-mail
+        # Se algum campo essencial estiver faltando, usa o valor do fallback
         if "subject" not in email_content or not email_content["subject"]:
-            email_content["subject"] = fallback["subject"]
+            email_content["subject"] = fallback["subject"]  # Usa o assunto do fallback
         
         if "body" not in email_content or not email_content["body"]:
-            email_content["body"] = fallback["body"]
+            email_content["body"] = fallback["body"]  # Usa o corpo do fallback
             
         if "approval_status" not in email_content:
+            # Usa o status de aprovação dos resultados de conformidade ou "Needs Review" como padrão
             email_content["approval_status"] = compliance_results.get("approval_recommendation", "Needs Review")
         
+        # Retorna o conteúdo do e-mail gerado
+        # Este é o resultado final do fluxo de trabalho
         return {"email_content": email_content}
         
     except Exception as e:
-        # Generate a meaningful fallback email on error
-        print(f"Error in commentary synthesis: {str(e)}")
+        # Em caso de erro durante a geração do e-mail, cria um e-mail de fallback significativo
+        # Isso garante que o fluxo de trabalho sempre produza uma saída, mesmo em caso de falha interna
+        print(f"Error in commentary synthesis: {str(e)}")  # Registra o erro no console
+        
+        # Cria um e-mail de fallback em português com informações básicas
         email_content = {
-            "subject": "Análise de Despesas de Viagem",
+            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
+            # Corpo informando que houve um erro na geração do relatório detalhado
             "body": "Foi realizada uma análise das despesas de viagem, mas ocorreu um erro na geração do relatório detalhado. Por favor, revise manualmente.",
-            "recipient": "Finance Department",
-            "approval_status": "Needs Review",
-            "approval_comments": "An error occurred during email generation. Please review manually.",
-            "evaluated_policies": "As políticas da empresa foram consideradas na análise."
+            "recipient": "Finance Department",  # Destinatário (departamento financeiro)
+            "approval_status": "Needs Review",  # Status indicando necessidade de revisão manual
+            "approval_comments": "An error occurred during email generation. Please review manually.",  # Comentários em inglês
+            "evaluated_policies": "As políticas da empresa foram consideradas na análise."  # Menção às políticas em português
         }
+        
+        # Retorna o conteúdo do e-mail de fallback
         return {"email_content": email_content}
     
 # Note: We're using a try-except inside the decorator because we want to return a
@@ -716,4 +1093,63 @@ IMPORTANTE: Por favor, revise os dados do relatório manualmente e aplique as po
             },
             "error": f"Workflow execution error: {str(e)}"
         }
+
+#############################################################################
+# NOTAS SOBRE O FLUXO DE TRABALHO COMPLETO
+#############################################################################
+
+# O fluxo de trabalho de auditoria de despesas implementado neste módulo segue uma
+# arquitetura de agentes especializados usando LangGraph. Cada agente tem uma função
+# específica e bem definida:
+#
+# 1. ParsingAgent:
+#    - Extrai e estrutura dados brutos de relatórios de despesas em PDF
+#    - Converte texto não estruturado em formato JSON padronizado
+#    - Utiliza OCR e processamento de imagem para extrair informações de tabelas
+#
+# 2. PolicyRetrievalAgent:
+#    - Identifica políticas relevantes com base nas despesas apresentadas
+#    - Consulta a base de conhecimento vetorial para recuperar políticas aplicáveis
+#    - Filtra e remove políticas duplicadas para melhorar a eficiência
+#
+# 3. ComplianceCheckAgent:
+#    - Verifica cada despesa contra as políticas da empresa
+#    - Identifica violações específicas (ex: valor máximo, refeições não reembolsáveis)
+#    - Gera um relatório detalhado de conformidade com justificativas
+#
+# 4. CommentarySynthesisAgent:
+#    - Sintetiza todos os dados em um e-mail legível para humanos
+#    - Fornece recomendações claras sobre aprovação ou rejeição
+#    - Formata o conteúdo para facilitar a compreensão pelos destinatários
+#
+# O fluxo de dados entre os agentes é gerenciado pelo estado compartilhado (WorkflowState),
+# que garante que cada agente tenha acesso aos dados necessários dos agentes anteriores.
+# O tratamento de erros é implementado em cada nível para garantir que o fluxo de trabalho
+# possa continuar mesmo quando ocorrem problemas em etapas individuais.
+
+#############################################################################
+# CONSIDERAÇÕES DE USO
+#############################################################################
+
+# Ao utilizar este módulo, considere os seguintes pontos:
+#
+# 1. Desempenho e Custos:
+#    - O uso intensivo de modelos de linguagem (LLMs) pode gerar custos significativos
+#    - O processamento de PDFs grandes pode ser demorado devido ao OCR e extração de tabelas
+#    - Considere implementar cache para resultados intermediários em casos de uso frequente
+#
+# 2. Personalização:
+#    - As mensagens de sistema para cada agente podem ser ajustadas para casos de uso específicos
+#    - Os prompts em prompts.yaml podem ser modificados para melhorar o desempenho em cenários particulares
+#
+# 3. Limitações Conhecidas:
+#    - A extração de tabelas depende da qualidade do PDF e da biblioteca img2table
+#    - O OCR pode ter problemas com fontes incomuns ou imagens de baixa qualidade
+#    - Políticas complexas ou ambíguas podem não ser interpretadas corretamente
+#
+# 4. Extensibilidade:
+#    - Novos agentes podem ser adicionados ao fluxo de trabalho conforme necessário
+#    - O estado do fluxo de trabalho (WorkflowState) pode ser expandido para incluir novos campos
+#    - Funções auxiliares podem ser modificadas para comportamentos específicos
+
 # End of file
