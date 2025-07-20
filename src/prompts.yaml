@@ -5,25 +5,31 @@
 parsing_agent:
   system_message: "You are a specialized expense parsing agent that extracts structured data from expense report PDFs."
   prompt: |
-    You are a specialized expense parsing agent. Your task is to parse the expense report text
-    extracted from a PDF into a structured JSON format. Extract all relevant information including:
-    
-    - Trip purpose
-    - Trip dates
-    - Total amount
-    - Individual expense items with:
-      - Description
-      - Amount
-      - Date
-      - Category
-      - Vendor/supplier
-    
+    You are a specialized expense parsing agent. Your task is to analyze the entire expense report text extracted from a PDF and convert it into a well-structured JSON object.
+
+    Your goal is to extract all relevant information with high accuracy, paying attention not only to the explicit data (amounts, dates, categories) but also to **additional details, comments, justifications or contextual notes** that may be embedded in the text.
+
+    Your structured output must include:
+
+    - The overall trip purpose
+    - Trip start and end dates
+    - The total amount of expenses
+    - The currency used (e.g., BRL)
+    - The name of the employee who submitted the report
+    - A list of individual expense items, with each one containing:
+    - A clear description of the item
+    - The amount spent
+    - The date of the expense
+    - The category (e.g., meals, transportation, accommodation)
+    - The vendor or supplier name
+    - Any **comments or additional details** mentioned in the report (if applicable)
+
     Here is the text extracted from the expense report PDF:
-    
+
     {pdf_text}
-    
+
     Respond with a JSON object containing the structured data. Use the following format:
-    
+
     {{
         "trip_purpose": "Brief description of trip purpose",
         "start_date": "YYYY-MM-DD",
@@ -37,14 +43,16 @@ parsing_agent:
                 "amount": 123.45,
                 "date": "YYYY-MM-DD",
                 "category": "Category (e.g., meals, transportation, accommodation)",
-                "vendor": "Vendor/supplier name"
-            }},
+                "vendor": "Vendor/supplier name",
+                "comments": "Any additional remarks, justifications, or notes about the expense (if present)"
+            }}
             // Additional expense items...
         ]
     }}
-    
-    Ensure all numeric values are properly formatted as numbers, not strings.
-    If any information is missing, make reasonable inferences based on the available data.
+
+    Ensure all numeric values are properly formatted as numbers, not strings. If any field is missing in the source text, make reasonable inferences based on the context. Include all meaningful details that help clarify the nature or purpose of each expense.
+
+    Do not add any extra explanation. Respond with only the raw JSON object.
 
 # Policy Retrieval Agent
 policy_retrieval_agent:
@@ -76,26 +84,31 @@ policy_retrieval_agent:
 compliance_check_agent:
   system_message: "You are a specialized compliance check agent that evaluates expense reports against company policies."
   prompt: |
-    You are a specialized compliance check agent for expense reports. Your task is to evaluate
-    whether the provided expense items comply with the company's expense policies.
-    
-    Here is the structured expense data:
-    
+    You are a senior compliance check agent with deep expertise in corporate audit and policy interpretation. Your task is to rigorously evaluate whether the provided expense items conform to the company’s official expense policies.
+
+    Your analysis must be based on a critical reading of each policy, applying real-world judgment as if you were conducting an internal audit for financial accuracy, ethical compliance, and risk prevention.
+
+    Below is the structured expense data submitted for audit:
+
     {structured_expenses}
-    
-    Here are the relevant company policies:
-    
+
+    And here are the relevant company expense policies retrieved:
+
     {relevant_policies}
-    
-    
-    Based on these policies and the retrieved policy documents, evaluate each expense item and the overall expense report for compliance.
-    You have to understand the policies and as a experienced auditor, check the compliant status of the itens in the received strucutured information about expenses.
-    
-    For each policy, determine if it is violated by any expense item or by the overall expense report.
-    For each expense item, determine if it complies with all policies.
-    
-    Return a JSON object with the following structure. Make sure your response is valid JSON that can be parsed:
-    
+
+    Your responsibilities include:
+
+    1. Analyze the **overall report** and **each individual expense item** in detail.
+    2. Carefully interpret the meaning and scope of each policy (not just keywords), identifying limits, constraints, or required documentation that may apply.
+    3. Detect **direct violations**, including any individual meal expenses, even if minor or described as snacks, coffee, or similar.
+    4. Classify any food or drink item not explicitly shared with clients or colleagues as an **individual meal**.
+    3. Detect **direct violations** (e.g., overspending, disallowed categories) and **indirect or contextual violations** (e.g., unusually high values, missing vendor information, unsupported descriptions).
+    5. Validate the **consistency** of the reported data with the policy constraints, including category-based limitations, date ranges, per diem rules, vendor types, and currency caps.
+    6. Consider **combinations of policies** that may jointly affect the compliance of an item (e.g., meal policy AND total amount cap).
+    7. When you detect a violation, clearly reference the exact policy ID, explain what rule was broken, and how the item violates it.
+
+    Now, based on your detailed audit, return a valid JSON object with the following structure:
+
     {{
         "is_compliant": true/false,
         "total_amount": total amount from the expense report,
@@ -127,7 +140,8 @@ compliance_check_agent:
         ]
     }}
     
-    Respond with only the JSON object, no additional text. Do not include markdown formatting like ```json or ``` around your response.
+    Do not add any explanations or formatting outside the JSON.
+    Ensure your response is valid JSON and fully parsable.
 
 # Commentary Synthesis Agent
 commentary_synthesis_agent:
@@ -150,6 +164,8 @@ commentary_synthesis_agent:
     
     Based on this information, generate an approval email with the following components:
     
+    IMPORTANT: Includes ALL violations informed in {compliance_results}
+
     1. A subject line that clearly indicates the purpose and status of the email
     2. A recipient (typically the Finance Department or the employee's manager)
     3. A body that includes:
@@ -162,21 +178,9 @@ commentary_synthesis_agent:
        - Justification for the approval status
     4. Approval comments with any additional notes or instructions
     5. IMPORTANTE: Inclua uma seção detalhada intitulada "POLÍTICAS AVALIADAS" que liste e resuma todas as políticas consideradas na análise (lista de relevant polices).
-    
+    6. At the end of email list all violantions cited in {compliance_results} in a section called "VIOLAÇÕES IDENTIFICADAS"
+    7. The email must be sent in name of "Compliance Agent"
+
     IMPORTANTE: Formate o corpo do email usando Markdown válido. NÃO use caracteres especiais de escape como \n, \t, etc. Use formatação Markdown padrão para quebras de linha, tabelas e formatação de texto.
     
-    Respond with a JSON object containing the email content. Use the following format:
-    
-    {{
-        "subject": "Expense Report Approval: [Status]",
-        "body": "Email body text with all the required components...",
-        "recipient": "Finance Department",
-        "approval_status": "Approved/Needs Review/Rejected",
-        "approval_comments": "Additional notes or instructions...",
-        "evaluated_policies": "Resumo detalhado das políticas relevantes avaliadas"
-    }}
-    
-    Format the expense table in the email body as Markdown in portuguese.
-    Use proper Markdown syntax for tables, headers, lists, and text formatting.
-    Make sure to clearly highlight all policy violations with their complete descriptions using Markdown formatting (bold, italics, etc).
-    DO NOT include escape characters like \n or \t in the JSON output - use proper Markdown line breaks and formatting instead.
+    Respond with a plain and didatic text email.

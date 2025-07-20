@@ -119,11 +119,11 @@ class WorkflowState(TypedDict):
 # === INICIALIZAÇÃO DO CLIENTE OPENAI ===
 # Configura o cliente que será usado para fazer chamadas aos modelos de linguagem da OpenAI
 # O modelo gpt-4o é mais avançado e tem melhor desempenho, mas é mais caro e mais lento
-# client = ChatOpenAI(model="gpt-4o")  # Modelo mais avançado (comentado)
+client = ChatOpenAI(model="gpt-4o")  # Modelo mais avançado 
 
 # Usamos o modelo gpt-3.5-turbo por padrão por ser mais rápido e econômico
 # Este modelo ainda oferece bom desempenho para as tarefas de análise de despesas
-client = ChatOpenAI(model="gpt-3.5-turbo")  # Modelo mais rápido e econômico
+# client = ChatOpenAI(model="gpt-3.5-turbo")  # Modelo mais rápido e econômico
 
 
 def call_llm(system_message: str, user_message: str, fallback_response: str = None):
@@ -601,7 +601,7 @@ def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
     O processo envolve:
     1. Consolidar os dados de todos os agentes anteriores
     2. Simplificar os dados para facilitar o processamento pelo LLM
-    3. Gerar um e-mail bem formatado com resumo, status de aprovação e comentários
+    3. Retornar o texto do e-mail gerado pelo LLM.
     
     Args:
         state (WorkflowState): Estado atual do fluxo de trabalho contendo todos os dados processados
@@ -615,14 +615,10 @@ def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
     if state.get("error"):
         # Cria um conteúdo de e-mail básico informando sobre o erro
         email_content = {
-            "subject": "Error Processing Expense Report",  # Assunto indicando erro
-            "body": f"There was an error processing the expense report: {state['error']}",  # Corpo com detalhes do erro
-            "recipient": "Finance Department",  # Destinatário (departamento financeiro)
-            "approval_status": "Needs Review",  # Status indicando necessidade de revisão manual
-            "approval_comments": "An error occurred during processing. Please review manually."  # Comentários adicionais
+            "email_text": "Error Processing Expense Report",  # Assunto indicando erro
         }
         # Retorna o conteúdo do e-mail de erro
-        return {"email_content": email_content}
+        return {"email_text": email_content}
     
     # Se não houver erro, tenta gerar um e-mail completo com base nos dados processados
     try:
@@ -695,12 +691,7 @@ def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
         # Define um fallback bem estruturado para a chamada do LLM
         # Isso será usado se a chamada ao LLM falhar completamente
         email_fallback = json.dumps({
-            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
-            "body": "Relatório de análise de despesas de viagem.",  # Corpo básico
-            "recipient": "Finance Department",  # Destinatário padrão
-            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),  # Status baseado nos resultados
-            "approval_comments": "Please review the expense report.",  # Comentário genérico
-            "evaluated_policies": "Relevant policies were considered in this analysis."  # Menção às políticas
+            "email_text": "Análise de Despesas de Viagem",  # Assunto padrão
         })
         
         # Chama o LLM para sintetizar o e-mail com os dados simplificados
@@ -714,47 +705,12 @@ def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
         # Define um fallback mais detalhado para análise da resposta
         # Este será usado se o parsing da resposta do LLM falhar
         fallback = {
-            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
-            # Corpo com informações básicas sobre o valor total
-            "body": f"Análise de despesas no valor total de {structured_expenses.get('total_amount', 0)} {structured_expenses.get('currency', 'BRL')}.",
-            "recipient": "Finance Department",  # Destinatário padrão
-            "approval_status": compliance_results.get("approval_recommendation", "Needs Review"),  # Status baseado nos resultados
-            "approval_comments": "Please review the expense report manually.",  # Solicitação de revisão manual
-            "evaluated_policies": "Relevant policies were considered in this analysis."  # Menção às políticas
+            "email_text": "Análise de Despesas de Viagem",  # Assunto padrão
         }
-        
-        # Analisa o conteúdo do e-mail da resposta do LLM
-        # Se a análise falhar, usa o fallback definido acima
-        email_content = parse_llm_json_response(content, fallback)
-        
-        # Limpa o texto markdown para garantir formatação adequada
-        # Isso remove marcações markdown que podem não ser adequadas para e-mail
-        if 'body' in email_content and email_content['body']:
-            email_content['body'] = clean_markdown_text(email_content['body'])
-        
-        # Limpa também o texto das políticas avaliadas
-        if 'evaluated_policies' in email_content and email_content['evaluated_policies']:
-            email_content['evaluated_policies'] = clean_markdown_text(email_content['evaluated_policies'])
-        
-        # Limpa o texto dos comentários de aprovação
-        if 'approval_comments' in email_content and email_content['approval_comments']:
-            email_content['approval_comments'] = clean_markdown_text(email_content['approval_comments'])
-        
-        # Garante que campos críticos estejam presentes no conteúdo do e-mail
-        # Se algum campo essencial estiver faltando, usa o valor do fallback
-        if "subject" not in email_content or not email_content["subject"]:
-            email_content["subject"] = fallback["subject"]  # Usa o assunto do fallback
-        
-        if "body" not in email_content or not email_content["body"]:
-            email_content["body"] = fallback["body"]  # Usa o corpo do fallback
-            
-        if "approval_status" not in email_content:
-            # Usa o status de aprovação dos resultados de conformidade ou "Needs Review" como padrão
-            email_content["approval_status"] = compliance_results.get("approval_recommendation", "Needs Review")
         
         # Retorna o conteúdo do e-mail gerado
         # Este é o resultado final do fluxo de trabalho
-        return {"email_content": email_content}
+        return {"email_content": content}
         
     except Exception as e:
         # Em caso de erro durante a geração do e-mail, cria um e-mail de fallback significativo
@@ -763,21 +719,12 @@ def commentary_synthesis_agent(state: WorkflowState) -> Dict[str, Any]:
         
         # Cria um e-mail de fallback em português com informações básicas
         email_content = {
-            "subject": "Análise de Despesas de Viagem",  # Assunto padrão
-            # Corpo informando que houve um erro na geração do relatório detalhado
-            "body": "Foi realizada uma análise das despesas de viagem, mas ocorreu um erro na geração do relatório detalhado. Por favor, revise manualmente.",
-            "recipient": "Finance Department",  # Destinatário (departamento financeiro)
-            "approval_status": "Needs Review",  # Status indicando necessidade de revisão manual
-            "approval_comments": "An error occurred during email generation. Please review manually.",  # Comentários em inglês
-            "evaluated_policies": "As políticas da empresa foram consideradas na análise."  # Menção às políticas em português
+            "email_text": "Análise de Despesas de Viagem",  # Assunto padrão
         }
         
         # Retorna o conteúdo do e-mail de fallback
         return {"email_content": email_content}
     
-# Note: We're using a try-except inside the decorator because we want to return a
-# custom fallback email rather than propagating the error to the decorator
-
 # Define the edge functions for conditional workflow routing
 
 def should_continue(state: WorkflowState) -> str:

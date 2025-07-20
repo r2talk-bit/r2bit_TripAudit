@@ -301,42 +301,18 @@ def main():
                     # Extract the email content from the workflow results
                     email = agentic_analysis["email_content"]
                     
-                    # Display the email header information (subject and recipient)
-                    st.subheader(f"Assunto: {email['subject']}")  # Display email subject as a subheader
-                    st.write(f"**Para:** {email['recipient']}")  # Display recipient with bold formatting
-                    
-                    # Display the email body content
-                    st.markdown("---")  # Horizontal separator line before the body
-                    st.write("**Corpo do Email:**")  # Section label with bold formatting
-                    st.write(email['body'])  # Display the actual email body content
-                    st.markdown("---")  # Horizontal separator line after the body
-                    
-                    # Display the approval status with color coding
-                    # Set color based on approval status: green for approved, orange for review, red for rejected
-                    status_color = "green" if email['approval_status'] == "Approved" else \
-                                  "orange" if email['approval_status'] == "Needs Review" else "red"
-                    
-                    # Display the approval status with the appropriate color using HTML
-                    # unsafe_allow_html=True allows the use of HTML tags in the markdown
-                    st.markdown(f"**Status de Aprovação:** <span style='color:{status_color}'>{email['approval_status']}</span>", unsafe_allow_html=True)
-                    
-                    # Display the approval comments
-                    st.write("**Comentários:**")  # Section label
-                    st.write(email['approval_comments'])  # The actual comments
-                    
-                    # Create a formatted text version of the email for download
-                    # This combines all parts of the email into a single text string
-                    email_content = f"Assunto: {email['subject']}\n"  # Start with the subject
-                    email_content += f"Para: {email['recipient']}\n\n"  # Add recipient with blank line after
-                    email_content += f"{email['body']}\n\n"  # Add the email body with blank lines
-                    email_content += f"Status de Aprovação: {email['approval_status']}\n"  # Add approval status
-                    email_content += f"Comentários: {email['approval_comments']}"  # Add comments
+                    st.write(email)
                     
                     # Create a download button for saving the email content as a text file
                     # This allows users to save the generated email for later use
+                    # Convert the email content to a string if it's a dictionary
+                    email_text = email
+                    if isinstance(email, dict):
+                        email_text = email.get("email_text", str(email))
+                    
                     st.download_button(
                         label="Baixar Email",  # Button text
-                        data=email_content,  # The content to be downloaded
+                        data=email_text,  # The content to be downloaded as a string
                         file_name="approval_email.txt",  # Default filename for the download
                         mime="text/plain"  # MIME type of the file (plain text)
                     )
