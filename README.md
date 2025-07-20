@@ -6,7 +6,7 @@ Um projeto Python para análise e auditoria de relatórios de despesas de viagem
 
 Este projeto implementa um fluxo de trabalho baseado em LangGraph com agentes especializados para análise e auditoria de relatórios de despesas. O sistema:
 
-1. Extrai texto e tabelas diretamente do PDF usando PyPDF e img2table
+1. Extrai texto diretamente do PDF usando PyPDF
 2. Implementa um fluxo de trabalho LangGraph com quatro agentes especializados:
    - **ParsingAgent**: Estruturação de dados brutos de despesas em formato JSON com extração detalhada de 23 tipos diferentes de campos
    - **PolicyRetrievalAgent**: Recuperação de políticas relevantes da empresa de uma base de conhecimento vetorial
@@ -36,22 +36,18 @@ pip install -r requirements.txt
 - **PyPDF**: Biblioteca para extração de texto de arquivos PDF
   - Instalada automaticamente através do requirements.txt
   
+<!-- Recursos planejados para implementação futura:
 - **img2table**: Biblioteca para extração de tabelas de imagens
-  - Instalada automaticamente através do requirements.txt
-  
 - **Tesseract OCR**: Engine para reconhecimento óptico de caracteres
-  - Por padrão, configurado para usar o idioma inglês ('eng')
-  - Para usar português, instale o arquivo de dados do idioma português (por.traineddata) no diretório tessdata do Tesseract
+-->
 
 ## Melhorias Recentes
 
 ### Julho 2025
 
-- **Extração de Tabelas Aprimorada**: Implementação da biblioteca img2table para melhorar a detecção e extração de tabelas de imagens
 - **Correção de Bugs Críticos**:
   - Resolvido problema de ambiguidade na avaliação de DataFrames em contexto booleano
   - Correção de erro de dimensão de imagem no LayoutLMv3 (conversão para RGB)
-- **Configuração de OCR**: Suporte para idioma português no Tesseract OCR
 - **Modelo de Extração Aprimorado**: Implementação de sistema de rotulagem detalhado com 23 categorias diferentes para extração de informações de relatórios de despesas
 - **Tratamento de Erros Robusto**: Implementação de mecanismos de fallback para garantir que o fluxo de trabalho continue mesmo em caso de falhas na API
 - **Formatação JSON Aprimorada**: Melhor visualização dos resultados de conformidade com formatação JSON indentada
@@ -63,7 +59,7 @@ r2bit_TripAudit/
 ├── data/               # Diretório para armazenar PDFs de exemplo
 ├── src/
 │   ├── agent_team.py     # Implementação do fluxo LangGraph com agentes especializados
-│   ├── data_preparation.py # Preparação e extração de dados de PDFs
+│   ├── audit_expenses.py # Lógica de negócios para auditoria de despesas
 │   ├── policy_management.py # Gerenciamento de políticas da empresa
 │   ├── graph_utils.py    # Utilitários para o fluxo LangGraph
 │   ├── prompts.yaml      # Prompts para os agentes de IA
@@ -75,6 +71,41 @@ r2bit_TripAudit/
 ```
 
 ## Como Usar
+
+### Configuração Inicial
+
+1. **Clone o repositório**
+
+```bash
+git clone https://github.com/seu-usuario/r2bit_TripAudit.git
+cd r2bit_TripAudit
+```
+
+2. **Crie e ative um ambiente virtual**
+
+```bash
+# No Windows
+python -m venv venv
+venv\Scripts\activate
+
+# No Linux/MacOS
+python -m venv venv
+source venv/bin/activate
+```
+
+3. **Instale as dependências**
+
+```bash
+pip install -r requirements.txt
+```
+
+4. **Configure a chave da API OpenAI**
+
+Crie um arquivo `.env` na raiz do projeto com o seguinte conteúdo:
+
+```
+OPENAI_API_KEY=sua_chave_api_aqui
+```
 
 ### Interface Web com Streamlit
 
@@ -137,6 +168,7 @@ O fluxo de trabalho de auditoria gera:
 ## Limitações e Melhorias Futuras
 
 - A extração de texto direta do PDF pode perder informações de layout e estrutura
+- Implementação futura de OCR e extração de tabelas usando Tesseract e img2table
 - Novas regras de conformidade podem ser adicionadas ao ComplianceCheckAgent conforme necessário
 - A integração com sistemas de gestão de despesas pode ser implementada
 - Implementação de um sistema de feedback para melhorar a precisão do processamento

@@ -279,3 +279,136 @@ def generate_formatted_policies_report(formatted_policies: List[Dict[str, Any]])
     report_lines.append("=== END OF POLICY REPORT ===")
     return "\n".join(report_lines)
     
+def remove_duplicate_policies(policies):
+
+    """
+    Remove políticas duplicadas com base no ID e índice de chunk.
+    
+    As políticas podem vir duplicadas da base de conhecimento quando são divididas em chunks.
+    Esta função garante que apenas uma versão de cada política seja usada.
+    
+    Args:
+        policies: Lista de dicionários de políticas retornados por get_relevant_policies
+        
+    Returns:
+        Lista de políticas únicas com duplicatas removidas
+    """
+    unique_policies = []  # Lista para armazenar políticas únicas
+    seen_ids = set()      # Conjunto para rastrear IDs de políticas já vistas
+    
+    for policy in policies:  # Para cada política na lista
+        # Cria um identificador único usando policy_id e chunk_index dos metadados
+        if 'id' in policy and 'metadata' in policy and 'chunk_index' in policy['metadata']:
+            # Combina o ID da política com o índice do chunk para criar um ID único
+            unique_id = f"{policy['id']}_{policy['metadata']['chunk_index']}"
+            if unique_id not in seen_ids:  # Se este ID único ainda não foi visto
+                seen_ids.add(unique_id)      # Adiciona ao conjunto de IDs vistos
+                unique_policies.append(policy)  # Adiciona a política à lista de políticas únicas
+        else:
+            # Se a política não tem a estrutura esperada, inclua-a de qualquer maneira
+            # Isso garante que não perdemos nenhuma política, mesmo que falte metadados
+            unique_policies.append(policy)
+            
+    return unique_policies  # Retorna a lista de políticas únicas
+
+
+def format_policies_for_llm(policies):
+    """
+    Formata as políticas para serem enviadas ao modelo de linguagem.
+    
+    Converte a lista de dicionários de políticas em um texto formatado
+    que é mais fácil para o LLM processar e entender.
+    
+    Args:
+        policies (List[Dict]): Lista de dicionários representando políticas
+        
+    Returns:
+        str: Texto formatado com todas as políticas numeradas
+    """
+    # Lista para armazenar cada política formatada
+    formatted_policies = []
+    
+    # Itera sobre as políticas, numerando-as a partir de 1
+    for i, policy in enumerate(policies, 1):
+        # Cria um texto formatado para cada política
+        formatted_policy = f"Policy {i}:\n"
+        formatted_policy += f"ID: {policy.get('policy_id', 'N/A')}\n"  # ID da política ou N/A se não existir
+        formatted_policy += f"Title: {policy.get('title', 'N/A')}\n"  # Título da política
+        formatted_policy += f"Content: {policy.get('content', 'N/A')}\n"  # Conteúdo da política
+        formatted_policies.append(formatted_policy)
+    
+    # Junta todas as políticas formatadas com duas quebras de linha entre cada uma
+    return "\n\n".join(formatted_policies)
+
+
+# === FUNÇÕES AUXILIARES ===
+# Estas funções ajudam a processar e formatar os dados das políticas
+
+def format_policies(policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Formata as políticas para o agente de verificação de conformidade.
+    
+    Esta função padroniza o formato das políticas recuperadas da base de conhecimento,
+    garantindo que todas tenham os mesmos campos e estrutura, independentemente
+    de como foram armazenadas originalmente.
+    
+    Args:
+        policies: Lista de objetos de política da base de dados vetorial
+        
+    Returns:
+        Lista formatada de políticas
+    """
+    formatted_policies = []  # Lista para armazenar as políticas formatadas
+    
+    for policy in policies:  # Para cada política na lista
+        # Obtém a descrição da política e metadados
+        description = policy.get("content", "")  # Conteúdo da política (texto)
+        policy_title = policy.get("metadata", {}).get("policy_name", "Expense Policy")  # Título da política
+        category = policy.get("metadata", {}).get("category", "General")  # Categoria da política
+        
+        # Extrai o policy_id dos metadados ou do campo id
+        policy_id = policy.get("metadata", {}).get("policy_id", None)  # Tenta obter dos metadados
+        if not policy_id and "id" in policy:  # Se não encontrou nos metadados
+            # Tenta extrair do campo id
+            id_parts = policy.get("id", "")
+            policy_id = id_parts  # Usa o ID completo
+        
+        # Cria um dicionário formatado com todos os campos necessários
+        formatted_policies.append({
+            "policy_id": policy_id or f"policy-{len(formatted_policies)}",  # ID único ou gerado
+            "policy_title": policy_title,  # Título da política
+            "description": description,  # Descrição resumida
+            "content": description,  # Conteúdo completo para verificação
+            "category": category,  # Categoria (ex: "meals", "travel")
+            "applicability_reason": "Relevant to expense items in report",  # Razão da aplicabilidade
+            "priority": "medium"  # Prioridade padrão
+        })
+    
+    return formatted_policies  # Retorna a lista de políticas formatadas
+
+def get_policy_type(policy: Dict[str, Any]) -> str:
+    """
+    Determina o tipo de política com base em seu conteúdo e metadados.
+    
+    Esta função analisa o texto da política para identificar se ela se refere a
+    regras específicas como limites de valor ou restrições de refeições.
+    
+    Args:
+        policy: Um dicionário de política
+        
+    Returns:
+        Identificador do tipo de política (ex: 'meals', 'max_amount')
+    """
+    # Converte todos os textos para minúsculas para facilitar a busca
+    description = policy.get("description", "").lower()  # Descrição em minúsculas
+    title = policy.get("policy_title", "").lower()  # Título em minúsculas
+    policy_id = policy.get("policy_id", "").lower()  # ID em minúsculas
+    
+    # Verifica se é uma política relacionada a refeições
+    if "meal" in description or "food" in description or "meal" in title or "meal" in policy_id:
+        return "meals"  # Política de refeições
+    # Verifica se é uma política relacionada a limites de valor
+    elif "maximum" in description or "limit" in description or "5000" in description or "max" in policy_id:
+        return "max_amount"  # Política de valor máximo
+    else:
+        return "other"  # Outros tipos de política
