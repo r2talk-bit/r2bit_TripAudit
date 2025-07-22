@@ -102,10 +102,10 @@ compliance_check_agent:
     2. Carefully interpret the meaning and scope of each policy (not just keywords), identifying limits, constraints, or required documentation that may apply.
     3. Detect **direct violations**, including any individual meal expenses, even if minor or described as snacks, coffee, or similar.
     4. Classify any food or drink item not explicitly shared with clients or colleagues as an **individual meal**.
-    3. Detect **direct violations** (e.g., overspending, disallowed categories) and **indirect or contextual violations** (e.g., unusually high values, missing vendor information, unsupported descriptions).
-    5. Validate the **consistency** of the reported data with the policy constraints, including category-based limitations, date ranges, per diem rules, vendor types, and currency caps.
-    6. Consider **combinations of policies** that may jointly affect the compliance of an item (e.g., meal policy AND total amount cap).
-    7. When you detect a violation, clearly reference the exact policy ID, explain what rule was broken, and how the item violates it.
+    5. Detect **direct violations** (e.g., overspending, disallowed categories) and **indirect or contextual violations** (e.g., unusually high values, missing vendor information, unsupported descriptions).
+    6. Validate the **consistency** of the reported data with the policy constraints, including category-based limitations, date ranges, per diem rules, vendor types, and currency caps.
+    7. Consider **combinations of policies** that may jointly affect the compliance of an item (e.g., meal policy AND total amount cap).
+    8. When you detect a violation, clearly reference the exact policy ID, explain what rule was broken, and how the item violates it.
     
     Now, based on your detailed audit, return a valid JSON object with the following structure:
 
@@ -171,17 +171,17 @@ commentary_synthesis_agent:
     3. A body that includes:
        - A summary of the expense report
        - A list of all expense items. DO NOT include empty rows or placeholder rows. ONLY include rows that contain actual expense data.
-       - Highlighted compliance issues, if any
+       - Highlighted compliance issues, if any. CONSIDER ALL THE VIOATIONS REPORTED IN COMPLIANCE RESULTS.
        - For each non-compliant item, include the specific policy description that was violated
        - For each violation, include the policy ID, description, and violation details
        - A clear approval status (Approved, Needs Review, or Rejected)
        - Justification for the approval status
     4. INCLUDE THE DETAILS OF all EXPENSES NOT APPROVED AND NEEDS REVIEW.
     5. Approval comments with any additional notes or instructions
-    6. IMPORTANTE: Inclua uma seção detalhada intitulada "POLÍTICAS AVALIADAS" que liste e resuma todas as políticas consideradas na análise (lista de relevant polices).
+    6. IMPORTANTE: Include a section called "POLÍTICAS AVALIADAS" that lists and resume all policies.
     7. At the end of email list all violantions cited in {compliance_results} in a section called "VIOLAÇÕES IDENTIFICADAS"
     8. The email must be sent in name of "Compliance Agent" and signature "Compliance Agent"
 
-    IMPORTANTE: Formate o corpo do email usando Markdown válido. NÃO use caracteres especiais de escape como \n, \t, etc. Use formatação Markdown padrão para quebras de linha, tabelas e formatação de texto.
+    IMPORTANT: Format the email body using valid Markdown. DO NOT use escape characters like \n, \t, etc. Use standard Markdown formatting for line breaks, tables, and text formatting.
     
     Respond with a plain and didatic text email.
